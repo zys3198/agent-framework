@@ -6,6 +6,7 @@ import pytest
 from session.models import Session
 from tools.base import ToolCall, ToolRegistry
 from tools.calculator import Calculator
+from tools.search import Search
 
 
 class FakeTool:
@@ -65,3 +66,15 @@ def test_calc_schema():
     c = Calculator()
     assert c.name == "calculator"
     assert c.parameters["type"] == "object"
+
+
+def test_search_hit():
+    s = Search()
+    res = asyncio.run(s.run({"query": "DeepSeek"}, Session(id="s")))
+    assert "DeepSeek" in res
+
+
+def test_search_miss():
+    s = Search()
+    res = asyncio.run(s.run({"query": "zzznotexistzzz"}, Session(id="s")))
+    assert "无结果" in res or res == ""
