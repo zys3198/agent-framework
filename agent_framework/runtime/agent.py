@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from runtime.executor import Executor
     from runtime.planner import Planner
     from runtime.replanner import Replanner
+    from runtime.rewoo import ReWOO
     from runtime.router import Router
     from session.store import Store
 
@@ -55,6 +56,7 @@ class Agent:
         trace_dir: Path,
         planner: Planner,
         replanner: Replanner,
+        rewoo: ReWOO,
         max_replans: int,
     ) -> None:
         self._store = store
@@ -64,6 +66,7 @@ class Agent:
         self._trace_dir = trace_dir
         self._planner = planner
         self._replanner = replanner
+        self._rewoo = rewoo
         self._max_replans = max_replans
 
     async def chat(self, session_id: str, user_input: str) -> str:
@@ -107,9 +110,14 @@ class Agent:
                 replans = 0
                 i = 0
                 while i < len(plan):
-                    outcome = await self._executor.run(
-                        session, plan[i].prompt, trace
-                    )
+                    if plan[i].is_rewoo_cluster:
+                        outcome = await self._rewoo.run(
+                            session, session.memory, plan[i].prompt, i, trace
+                        )
+                    else:
+                        outcome = await self._executor.run(
+                            session, plan[i].prompt, trace
+                        )
                     results[i] = outcome
                     if outcome.needs_replan and replans < self._max_replans:
                         session.fsm_state = State.REPLANNING.value
@@ -124,11 +132,17 @@ class Agent:
                         continue  # re-run index i (= first revised step)
                     i += 1
 
-                answer = await asyncio.to_thread(
-                    self._llm.synthesize,
-                    [s.prompt for s in plan],
-                    {str(idx): getattr(o, "text", o) for idx, o in results.items()},
-                )
+                # When every step was a ReWOO cluster, its solver already
+                # synthesized the final answer; skip the top-level synth.
+                if plan and all(s.is_rewoo_cluster for s in plan):
+                    last = results[len(plan) - 1]
+                    answer = str(getattr(last, "text", last))
+                else:
+                    answer = await asyncio.to_thread(
+                        self._llm.synthesize,
+                        [s.prompt for s in plan],
+                        {str(idx): getattr(o, "text", o) for idx, o in results.items()},
+                    )
                 # Contract C: agent appends ONLY the synthesized final answer here;
                 # per-step messages were persisted by the executor.
                 session.fsm_state = State.RESPONDING.value

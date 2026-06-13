@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import ClassVar
 
 from llm.client import LLMResponse
 from runtime.agent import Agent
@@ -73,8 +74,11 @@ def _build_agent(
     route: Route,
     executor=None,
     replanner=None,
+    rewoo=None,
     max_replans: int = 2,
 ) -> Agent:
+    from runtime.rewoo import ReWOO
+
     return Agent(
         store=Store(tmp_path),
         router=FixedRouter(route),
@@ -89,6 +93,7 @@ def _build_agent(
         trace_dir=tmp_path,
         planner=Planner(llm=llm),
         replanner=replanner or Replanner(llm=llm),
+        rewoo=rewoo or ReWOO(llm=llm, registry=ToolRegistry()),
         max_replans=max_replans,
     )
 
@@ -182,3 +187,51 @@ async def test_memory_persists_across_turns(tmp_path):
 
 def test_chat_is_async():
     assert inspect.iscoroutinefunction(Agent.chat)
+
+
+async def test_plan_loop_runs_rewoo_cluster(tmp_path):
+    from runtime.rewoo import ReWOO
+    from tools.base import ToolRegistry
+
+    # planner -> rewoo_cluster step; rewoo plan_dag + solver consume responds
+    llm = FakeLLM(
+        responds=[
+            '{"rewoo_cluster": "analyze X and Y"}',
+            '{"nodes":[{"id":"E1","tool":"echo","args":{"text":"x"},"deps":[]}]}',
+            '{"answer":"rewoven answer","evidence_sufficient":true}',
+        ],
+    )
+
+    class EchoTool:
+        name = "echo"
+        description = "echo"
+        parameters: ClassVar = {"type": "object", "properties": {"text": {"type": "string"}}}
+
+        async def run(self, args, session):
+            return "echo:x"
+
+    reg = ToolRegistry()
+    reg.register(EchoTool())
+    ex = Executor(
+        llm=llm,
+        registry=reg,
+        reflexion=Reflexion(llm=None),  # type: ignore[arg-type]
+        max_steps=5,
+    )
+    rw = ReWOO(llm=llm, registry=reg)
+    agent = Agent(
+        store=Store(tmp_path),
+        router=FixedRouter(Route.PLAN_REQUIRED),
+        executor=ex,
+        llm=llm,
+        trace_dir=tmp_path,
+        planner=Planner(llm=llm),
+        replanner=Replanner(llm=llm),
+        rewoo=rw,
+        max_replans=2,
+    )
+    out = await agent.chat("s7", "go")
+    assert out == "rewoven answer"
+    s = agent._store.load("s7")
+    assert s.memory.plan[0].is_rewoo_cluster is True
+    assert s.memory.workspace.get("E1") == "echo:x"

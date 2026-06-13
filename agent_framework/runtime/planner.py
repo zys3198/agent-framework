@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -43,6 +43,22 @@ def _parse_steps(text: str) -> list[str]:
     return out
 
 
+def _extract_json(text: str) -> dict[str, Any] | None:
+    import json
+    import re
+
+    if not text:
+        return None
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 class Planner:
     """Produce an ordered step list for a complex task (族 D, main path)."""
 
@@ -57,4 +73,8 @@ class Planner:
             [{"role": "system", "content": _PLANNER_PROMPT}],
             user_input,
         )
-        return [Step(prompt=p) for p in _parse_steps(text or "")]
+        raw = text or ""
+        data = _extract_json(raw)
+        if isinstance(data, dict) and isinstance(data.get("rewoo_cluster"), str):
+            return [Step(prompt=data["rewoo_cluster"], is_rewoo_cluster=True)]
+        return [Step(prompt=p) for p in _parse_steps(raw)]

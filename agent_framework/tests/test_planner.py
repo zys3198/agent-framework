@@ -63,3 +63,20 @@ async def test_make_plan_empty_when_no_steps():
 
 def test_make_plan_is_async():
     assert inspect.iscoroutinefunction(Planner.make_plan)
+
+
+async def test_make_plan_detects_rewoo_cluster():
+    llm = ScriptedLLM('{"rewoo_cluster": "analyze X and Y in parallel"}')
+    planner = Planner(llm)
+    plan = await planner.make_plan("compare X and Y", Memory())
+    assert len(plan) == 1
+    assert plan[0].is_rewoo_cluster is True
+    assert plan[0].prompt == "analyze X and Y in parallel"
+
+
+async def test_make_plan_plain_steps_when_no_cluster_key():
+    llm = ScriptedLLM('{"steps": ["a", "b"]}')
+    planner = Planner(llm)
+    plan = await planner.make_plan("do a then b", Memory())
+    assert [s.prompt for s in plan] == ["a", "b"]
+    assert all(not s.is_rewoo_cluster for s in plan)
