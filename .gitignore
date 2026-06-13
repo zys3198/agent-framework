@@ -13,9 +13,8 @@ venv/
 env/
 ENV/
 
-# Runtime data (per spec: sessions/ + trace/ 是运行时产物)
-sessions/
-trace/
+# Runtime data (per spec: 写入 agent_framework/sessions/*.json；trace 的 *.jsonl 已被下方 *.jsonl 规则覆盖)
+agent_framework/sessions/
 
 # Logs
 *.log
