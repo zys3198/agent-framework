@@ -1,4 +1,4 @@
-from session.models import Memory, Message, Session, TodoItem
+from session.models import Memory, Message, Session, Step, TodoItem
 
 
 def test_todo_item_defaults():
@@ -34,3 +34,44 @@ def test_to_dict_roundtrip():
     assert s2.memory.todos[0].status == "IN_PROGRESS"
     assert s2.messages[0].role == "user"
     assert s2.fsm_state == "IDLE"
+
+
+def test_step_roundtrip():
+    s = Step(prompt="do A", is_rewoo_cluster=False, done=False)
+    d = s.to_dict()
+    assert d == {"prompt": "do A", "is_rewoo_cluster": False, "done": False}
+    s2 = Step.from_dict(d)
+    assert s2.prompt == "do A"
+    assert s2.is_rewoo_cluster is False
+    assert s2.done is False
+
+
+def test_step_defaults():
+    s = Step(prompt="x")
+    assert s.is_rewoo_cluster is False
+    assert s.done is False
+
+
+def test_step_from_dict_tolerates_str():
+    # old session files stored plan items as raw strings
+    s = Step.from_dict("legacy step text")
+    assert s.prompt == "legacy step text"
+    assert s.done is False
+
+
+def test_step_from_dict_tolerates_extra_keys():
+    s = Step.from_dict({"prompt": "p", "future_field": "ignore me"})
+    assert s.prompt == "p"
+
+
+def test_memory_plan_step_roundtrip():
+    m = Memory()
+    m.plan.append(Step(prompt="step one", done=True))
+    m.plan.append(Step(prompt="step two"))
+    d = m.to_dict()
+    assert d["plan"][0] == {"prompt": "step one", "is_rewoo_cluster": False, "done": True}
+    m2 = Memory.from_dict(d)
+    assert len(m2.plan) == 2
+    assert m2.plan[0].prompt == "step one"
+    assert m2.plan[0].done is True
+    assert m2.plan[1].done is False

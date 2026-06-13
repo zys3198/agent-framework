@@ -92,6 +92,7 @@ class Executor:
 
             for tc in resp.tool_calls:
                 trace.log_tool_call(step, tc.name, tc.args)
+                exhausted = False
                 try:
                     result = await self._registry.dispatch(
                         ToolCall(name=tc.name, args=tc.args), session
@@ -102,6 +103,9 @@ class Executor:
                     lesson = await self._reflexion.reflect(tc, result, session.memory)
                     session.memory.lessons.append(lesson.text)
                     trace.log_reflexion(step, lesson.text)
+                    exhausted = lesson.reflexion_exhausted
+                # Contract C: append the tool message BEFORE any early return so
+                # reloaded sessions never hold an orphan tool message (API 400).
                 trace.log_tool_result(step, result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": result}
@@ -109,7 +113,9 @@ class Executor:
                 session.messages.append(
                     Message(role="tool", content=result, tool_call_id=tc.id)
                 )
+                if exhausted:  # Reflexion spent -> hand off to Replanner (族 D')
+                    return Outcome(text=result, needs_replan=True)
 
         trace.log_truncated()
         session.messages.append(Message(role="assistant", content="(truncated)"))
-        return Outcome(text="(truncated)", needs_replan=False)
+        return Outcome(text="(truncated)", needs_replan=True)

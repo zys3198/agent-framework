@@ -32,16 +32,38 @@ class TodoItem:
 
 
 @dataclass
+class Step:
+    prompt: str
+    is_rewoo_cluster: bool = False  # S4 ReWOO marker; unused in S3
+    done: bool = False  # completed steps are skipped on replan rerun
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any] | str) -> Step:
+        # tolerate old session files that stored plan items as raw strings:
+        # wrap a bare string as Step(prompt=str). Also tolerate extra keys.
+        if isinstance(d, str):
+            return cls(prompt=d)
+        return cls(
+            prompt=d["prompt"],
+            is_rewoo_cluster=d.get("is_rewoo_cluster", False),
+            done=d.get("done", False),
+        )
+
+
+@dataclass
 class Memory:
     todos: list[TodoItem] = field(default_factory=list)
-    plan: list[str] = field(default_factory=list)
+    plan: list[Step] = field(default_factory=list)
     lessons: list[str] = field(default_factory=list)
     workspace: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "todos": [t.to_dict() for t in self.todos],
-            "plan": list(self.plan),
+            "plan": [s.to_dict() for s in self.plan],
             "lessons": list(self.lessons),
             "workspace": dict(self.workspace),
         }
@@ -50,7 +72,7 @@ class Memory:
     def from_dict(cls, d: dict[str, Any]) -> Memory:
         return cls(
             todos=[TodoItem.from_dict(t) for t in d.get("todos", [])],
-            plan=list(d.get("plan", [])),
+            plan=[Step.from_dict(s) for s in d.get("plan", [])],
             lessons=list(d.get("lessons", [])),
             workspace=dict(d.get("workspace", {})),
         )

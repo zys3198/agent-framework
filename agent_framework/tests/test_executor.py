@@ -31,6 +31,16 @@ class FakeReflexion(Reflexion):
         return Lesson(text="fake lesson", reflexion_exhausted=False)
 
 
+class ExhaustedReflexion(Reflexion):
+    """Always reports reflexion exhausted -> executor must signal needs_replan."""
+
+    def __init__(self) -> None:
+        super().__init__(llm=None)  # type: ignore[arg-type]
+
+    async def reflect(self, call, error, memory) -> Lesson:  # type: ignore[override]
+        return Lesson(text="exhausted lesson", reflexion_exhausted=True)
+
+
 class EchoTool:
     name = "echo"
     description = "echo back the text"
@@ -97,7 +107,8 @@ async def test_max_steps_truncation(tmp_path):
         max_steps=2,
     )
     out = await ex.run(Session(id="s"), "loop", _trace(tmp_path))
-    assert out.needs_replan is False
+    # spec 3.2: truncation signals needs_replan so Agent may replan
+    assert out.needs_replan is True
     assert "truncated" in out.text.lower()
 
 
@@ -156,3 +167,28 @@ async def test_multiple_tool_calls_one_round(tmp_path):
     assert out.text == "both done"
     tool_msgs = [m for m in s.messages if m.role == "tool"]
     assert len(tool_msgs) == 2
+
+
+async def test_tool_error_exhausted_triggers_replan(tmp_path):
+    class BoomTool:
+        name = "boom"
+        description = "always errors"
+        parameters: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+        async def run(self, args, session) -> str:
+            raise RuntimeError("boom!")
+
+    reg = _registry()
+    reg.register(BoomTool())
+    ex = Executor(
+        llm=FakeLLM([LLMResponse(text="", tool_calls=[_tc("boom", {})])]),
+        registry=reg,
+        reflexion=ExhaustedReflexion(),
+        max_steps=5,
+    )
+    s = Session(id="s")
+    out = await ex.run(s, "go", _trace(tmp_path))
+    assert out.needs_replan is True
+    assert "exhausted lesson" in s.memory.lessons
+    # Contract C: tool message persisted (not orphaned) even on early return
+    assert any(m.role == "tool" for m in s.messages)
