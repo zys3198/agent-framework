@@ -1,0 +1,153 @@
+"""FastAPI web layer: chat route, session/trace readers, static UI."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+import config
+from llm.client import LLMClient
+from runtime.agent import Agent
+from runtime.executor import Executor
+from runtime.planner import Planner
+from runtime.reflexion import Reflexion
+from runtime.replanner import Replanner
+from runtime.rewoo import ReWOO
+from runtime.router import Router
+from session.store import Store
+from tools.base import ToolRegistry
+from tools.calculator import Calculator
+from tools.search import Search
+from tools.todo import Todo
+
+
+class ChatRequest(BaseModel):
+    session_id: str | None = None
+    input: str
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    session_id: str
+
+
+def build_agent() -> Agent:
+    """Wire the full Agent from env. Raises RuntimeError if no API key."""
+    registry = ToolRegistry()
+    registry.register(Calculator())  # type: ignore[arg-type]
+    registry.register(Search())  # type: ignore[arg-type]
+    registry.register(Todo())  # type: ignore[arg-type]
+    llm = LLMClient.from_env()
+    store = Store(config.SESSION_DIR)
+    return Agent(
+        store=store,
+        router=Router(llm=llm),
+        executor=Executor(
+            llm=llm,
+            registry=registry,
+            reflexion=Reflexion(llm=llm),
+            max_steps=config.MAX_STEPS,
+        ),
+        llm=llm,
+        trace_dir=config.TRACE_DIR,
+        planner=Planner(llm=llm),
+        replanner=Replanner(llm=llm),
+        rewoo=ReWOO(llm=llm, registry=registry),
+        max_replans=config.MAX_REPLANS,
+    )
+
+
+def _trace_path(trace_dir: Path, session_id: str) -> Path:
+    """Resolve the jsonl trace file, guarding against path traversal.
+
+    Only the basename of session_id is used; a .jsonl suffix is always appended.
+    """
+    safe_name = Path(session_id).name
+    return trace_dir / f"{safe_name}.jsonl"
+
+
+def _read_trace(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            out.append(json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def create_app(agent: Agent | None, store: Store, trace_dir: Path) -> FastAPI:
+    """Build a FastAPI app wired to the given agent/store/trace_dir.
+
+    If agent is None the /chat route returns 503 (no API key configured);
+    read-only routes still work.
+    """
+    app = FastAPI(title="agent-framework")
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.post("/chat", response_model=ChatResponse)
+    async def chat(req: ChatRequest) -> ChatResponse:
+        if agent is None:
+            raise HTTPException(
+                status_code=503, detail="DEEPSEEK_API_KEY not configured"
+            )
+        sid = req.session_id or _new_session_id()
+        answer = await agent.chat(sid, req.input)
+        return ChatResponse(answer=answer, session_id=sid)
+
+    @app.get("/sessions")
+    def list_sessions() -> list[dict[str, Any]]:
+        return store.list()
+
+    @app.get("/sessions/{session_id}")
+    def get_session(session_id: str) -> dict[str, Any]:
+        return store.load(session_id).to_dict()
+
+    @app.get("/trace/{session_id}")
+    def get_trace(session_id: str) -> list[dict[str, Any]]:
+        return _read_trace(_trace_path(trace_dir, session_id))
+
+    @app.get("/")
+    def index() -> FileResponse:
+        return FileResponse(str(static_dir / "index.html"))
+
+    return app
+
+
+def _new_session_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _build_default_app() -> FastAPI:
+    try:
+        agent = build_agent()
+        store = agent._store
+        trace_dir = config.TRACE_DIR
+    except RuntimeError:
+        agent = None
+        store = Store(config.SESSION_DIR)
+        trace_dir = config.TRACE_DIR
+    return create_app(agent, store, trace_dir)
+
+
+app = _build_default_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host=config.HOST, port=config.PORT, reload=False)
