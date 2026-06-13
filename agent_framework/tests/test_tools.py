@@ -5,6 +5,7 @@ import pytest
 
 from session.models import Session
 from tools.base import ToolCall, ToolRegistry
+from tools.calculator import Calculator
 
 
 class FakeTool:
@@ -45,3 +46,22 @@ def test_schemas_export():
             "parameters": {"type": "object", "properties": {}},
         }
     ]
+
+
+def test_calc_basic():
+    c = Calculator()
+    assert asyncio.run(c.run({"expr": "1 + 2 * 3"}, Session(id="s"))) == "7"
+    assert asyncio.run(c.run({"expr": "(10 - 4) / 2"}, Session(id="s"))) == "3.0"
+
+
+def test_calc_rejects_injection():
+    c = Calculator()
+    for bad in ["__import__('os')", "open('x')", "1; import os", "pow(2,3)"]:
+        res = asyncio.run(c.run({"expr": bad}, Session(id="s")))
+        assert res.startswith("ERROR"), f"should reject: {bad}"
+
+
+def test_calc_schema():
+    c = Calculator()
+    assert c.name == "calculator"
+    assert c.parameters["type"] == "object"
