@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
+from session.models import Session
+
+log = logging.getLogger(__name__)
+
+
+class Store:
+    """JSON 持久化. 原子写 (tmp + os.replace), 损坏文件备份后重建."""
+
+    def __init__(self, root: Path | str) -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, session_id: str) -> Path:
+        # 防路径穿越: 只取文件名, 丢弃任何目录部分
+        safe = Path(session_id).name
+        return self.root / f"{safe}.json"
+
+    def load(self, session_id: str) -> Session:
+        p = self._path(session_id)
+        if not p.exists():
+            return Session(id=session_id)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return Session.from_dict(data)
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            bak = p.with_suffix(p.suffix + ".corrupt.bak")
+            try:
+                os.replace(p, bak)
+                log.warning("corrupt session file backed up: %s -> %s (%s)", p, bak, e)
+            except OSError:
+                pass
+            return Session(id=session_id)
+
+    def save(self, session: Session) -> None:
+        p = self._path(session.id)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp, p)
+
+    def list(self) -> list[dict[str, Any]]:
+        out = []
+        for p in sorted(self.root.glob("*.json")):
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+                out.append(
+                    {
+                        "id": d["id"],
+                        "todo_count": len(d.get("memory", {}).get("todos", [])),
+                        "updated_at": d.get("updated_at", ""),
+                        "fsm_state": d.get("fsm_state", "IDLE"),
+                    }
+                )
+            except (json.JSONDecodeError, KeyError):
+                continue
+        return out
