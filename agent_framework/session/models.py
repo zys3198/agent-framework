@@ -21,7 +21,14 @@ class TodoItem:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TodoItem:
-        return cls(**d)
+        # explicit fields, not cls(**d): tolerate extra keys; a field added
+        # later gets its default instead of KeyError on old session files
+        return cls(
+            id=d["id"],
+            title=d["title"],
+            status=d.get("status", "PLANNED"),
+            created_at=d.get("created_at", _now()),
+        )
 
 
 @dataclass
@@ -60,7 +67,12 @@ class Message:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Message:
-        return cls(**d)
+        # explicit fields, not cls(**d): tolerate extra keys, future fields default
+        return cls(
+            role=d["role"],
+            content=d["content"],
+            tool_call_id=d.get("tool_call_id"),
+        )
 
 
 @dataclass
