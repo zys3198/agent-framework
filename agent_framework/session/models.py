@@ -61,6 +61,10 @@ class Message:
     role: str  # user | assistant | tool
     content: str
     tool_call_id: str | None = None
+    # assistant messages may carry tool_calls (OpenAI function-calling protocol);
+    # persisted so reloaded sessions keep assistant(tool_calls) -> tool(result)
+    # pairs atomic (a lone tool message is rejected by the API).
+    tool_calls: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -72,6 +76,7 @@ class Message:
             role=d["role"],
             content=d["content"],
             tool_call_id=d.get("tool_call_id"),
+            tool_calls=d.get("tool_calls"),
         )
 
 
