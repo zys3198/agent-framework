@@ -1,4 +1,4 @@
-from session.models import TodoItem, Memory, Message, Session
+from session.models import Memory, Message, Session, TodoItem
 
 
 def test_todo_item_defaults():
