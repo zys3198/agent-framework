@@ -7,6 +7,7 @@ from session.models import Session
 from tools.base import ToolCall, ToolRegistry
 from tools.calculator import Calculator
 from tools.search import Search
+from tools.todo import Todo
 
 
 class FakeTool:
@@ -78,3 +79,74 @@ def test_search_miss():
     s = Search()
     res = asyncio.run(s.run({"query": "zzznotexistzzz"}, Session(id="s")))
     assert "无结果" in res or res == ""
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def test_todo_create():
+    t = Todo()
+    s = Session(id="s")
+    res = _run(t.run({"action": "create", "title": "写大纲"}, s))
+    assert "created #1" in res
+    assert len(s.memory.todos) == 1
+    assert s.memory.todos[0].title == "写大纲"
+    assert s.memory.todos[0].status == "PLANNED"
+
+    res2 = _run(t.run({"action": "create", "title": "B"}, s))
+    assert "#2" in res2
+    assert len(s.memory.todos) == 2
+
+
+def test_todo_list():
+    t = Todo()
+    s = Session(id="s")
+    _run(t.run({"action": "create", "title": "A"}, s))
+    _run(t.run({"action": "create", "title": "B"}, s))
+    out = _run(t.run({"action": "list"}, s))
+    assert "A" in out and "B" in out and "#1" in out and "#2" in out
+
+
+def test_todo_update():
+    t = Todo()
+    s = Session(id="s")
+    _run(t.run({"action": "create", "title": "A"}, s))
+    res = _run(t.run({"action": "update", "id": "1", "status": "IN_PROGRESS"}, s))
+    assert "updated" in res.lower()
+    assert s.memory.todos[0].status == "IN_PROGRESS"
+
+
+def test_todo_update_bad_status():
+    t = Todo()
+    s = Session(id="s")
+    _run(t.run({"action": "create", "title": "A"}, s))
+    res = _run(t.run({"action": "update", "id": "1", "status": "WRONG"}, s))
+    assert res.startswith("ERROR")
+
+
+def test_todo_update_missing_id():
+    t = Todo()
+    s = Session(id="s")
+    res = _run(t.run({"action": "update", "id": "99", "status": "DONE"}, s))
+    assert res.startswith("ERROR")
+
+
+def test_todo_list_empty():
+    t = Todo()
+    s = Session(id="s")
+    assert _run(t.run({"action": "list"}, s)) == "(empty)"
+
+
+def test_todo_create_missing_title():
+    t = Todo()
+    s = Session(id="s")
+    res = _run(t.run({"action": "create"}, s))
+    assert res.startswith("ERROR")
+
+
+def test_todo_unknown_action():
+    t = Todo()
+    s = Session(id="s")
+    res = _run(t.run({"action": "delete", "id": "1"}, s))
+    assert res.startswith("ERROR")
