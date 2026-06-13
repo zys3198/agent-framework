@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+env/
+ENV/
+
+# Runtime data (per spec: sessions/ + trace/ 是运行时产物)
+sessions/
+trace/
+
+# Logs
+*.log
+*.jsonl
+
+# Secrets / config
+.env
+.env.*
+!.env.example
+
+# Test / type cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
