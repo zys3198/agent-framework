@@ -104,13 +104,16 @@
     font-size: 11px;
     color: var(--muted);
     border-top: 1px solid var(--border);
-    word-break: break-all;
     line-height: 1.5;
   }
   #sidebar-footer #current-sid {
-    color: var(--text-soft);
-    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
-    font-size: 10.5px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* ---------- main ---------- */
@@ -168,7 +171,7 @@
     margin: 0 auto;
   }
   #messages:empty::before {
-    content: "开始对话 — 试试「算 123 乘以 456」或「建一个待办：写周报」";
+    content: "今天有什么可以帮你的";
     color: var(--faint);
     font-size: 14px;
     text-align: center;
@@ -353,12 +356,12 @@ function getOrCreateSid() {
 function shortSid(s) {
   return s.length > 12 ? s.slice(0, 8) + "…" + s.slice(-4) : s;
 }
-function renderSid() {
-  document.getElementById("current-sid").textContent = shortSid(currentSid);
+function setFooterTitle(name) {
+  document.getElementById("current-sid").textContent = name || "新会话";
 }
 
 var currentSid = getOrCreateSid();
-renderSid();
+setFooterTitle("新会话");
 
 var messagesEl = document.getElementById("messages");
 var inputEl = document.getElementById("input");
@@ -425,7 +428,7 @@ async function sendChat() {
     if (data.session_id && data.session_id !== currentSid) {
       currentSid = data.session_id;
       localStorage.setItem("session_id", currentSid);
-      renderSid();
+      setFooterTitle("新会话");
     }
     loadSessions();
   } catch (e) {
@@ -448,7 +451,7 @@ inputEl.addEventListener("keydown", function (e) {
 document.getElementById("new-chat-btn").addEventListener("click", function () {
   localStorage.removeItem("session_id");
   currentSid = getOrCreateSid();
-  renderSid();
+  setFooterTitle("新会话");
   messagesEl.innerHTML = "";
   inputEl.focus();
 });
@@ -473,6 +476,8 @@ async function loadSessions() {
       item.addEventListener("click", function () { loadSessionDetail(row.id); });
       sessionListEl.appendChild(item);
     });
+    var cur = rows.find(function (r) { return r.id === currentSid; });
+    setFooterTitle(cur ? cur.title : "新会话");
   } catch (e) {
     /* ignore */
   }
@@ -487,7 +492,7 @@ async function loadSessionDetail(sid) {
     var detail = await resp.json();
     currentSid = sid;
     localStorage.setItem("session_id", sid);
-    renderSid();
+    setFooterTitle("新会话");
     messagesEl.innerHTML = "";
     var msgs = detail.messages || [];
     msgs.forEach(function (m) {
