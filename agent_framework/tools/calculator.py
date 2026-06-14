@@ -26,13 +26,30 @@ _UNARY_OPS: dict[type[ast.AST], Callable[[int | float], int | float]] = {
 }
 
 
+_MAX_LITERAL_BITS = 1024
+_MAX_POW_EXPONENT = 1000
+_MAX_RESULT_BITS = 4096
+
+
 def _eval(node: ast.AST) -> int | float:
     if isinstance(node, ast.Expression):
         return _eval(node.body)
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        if isinstance(node.value, int) and node.value.bit_length() > _MAX_LITERAL_BITS:
+            raise ValueError("integer literal too large")
         return node.value
     if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
-        return _BIN_OPS[type(node.op)](_eval(node.left), _eval(node.right))
+        left = _eval(node.left)
+        right = _eval(node.right)
+        if isinstance(node.op, ast.Pow):
+            # bound exponent + result to prevent CPU/memory blowup (e.g. 9**9**9)
+            if isinstance(right, int) and right > _MAX_POW_EXPONENT:
+                raise ValueError("exponent too large")
+            result = _BIN_OPS[ast.Pow](left, right)
+            if isinstance(result, int) and result.bit_length() > _MAX_RESULT_BITS:
+                raise ValueError("result too large")
+            return result
+        return _BIN_OPS[type(node.op)](left, right)
     if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
         return _UNARY_OPS[type(node.op)](_eval(node.operand))
     raise ValueError(f"disallowed expression: {ast.dump(node)}")

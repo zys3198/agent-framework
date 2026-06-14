@@ -37,5 +37,8 @@ class Reflexion:
             [{"role": "system", "content": "You produce concise lessons."}],
             prompt,
         )
-        exhausted = len(memory.lessons) >= _EXHAUSTION_THRESHOLD
+        # +1: this lesson is appended by the caller AFTER reflect returns,
+        # so anticipate it to trigger exhaustion on the threshold-th failure
+        # (not one late).
+        exhausted = len(memory.lessons) + 1 >= _EXHAUSTION_THRESHOLD
         return Lesson(text=(text or "").strip(), reflexion_exhausted=exhausted)
