@@ -44,7 +44,11 @@ def build_agent() -> Agent:
     registry.register(Calculator())  # type: ignore[arg-type]
     registry.register(Search())  # type: ignore[arg-type]
     registry.register(Todo())  # type: ignore[arg-type]
-    llm = LLMClient.from_env()
+    llm = LLMClient.from_env(
+        api_key=config.DEEPSEEK_API_KEY,
+        base_url=config.DEEPSEEK_BASE_URL,
+        model=config.MODEL,
+    )
     store = Store(config.SESSION_DIR)
     return Agent(
         store=store,

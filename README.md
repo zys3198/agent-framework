@@ -124,7 +124,7 @@ You are a helpful agent.
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 真实 DeepSeek API 跑通多轮对话 | [ ] | 待手动验证 (mock-LLM 测试全绿, 真 API 需配 key 实跑) |
+| 真实 DeepSeek API 跑通多轮对话 | [x] | e2e 实跑通过 (DIRECT/SIMPLE_TOOL/cross-turn memory, 4 轮, 2026-06-14) |
 | Router 正确分流三种路径 | [x] | mock 测试覆盖 (test_router + test_agent) |
 | Executor function-calling loop 跑通 (含 max_steps 截断) | [x] | mock 测试 (test_executor) |
 | 工具异常触发 Reflexion 且 lesson 落 memory | [x] | mock 测试 (test_executor) |
@@ -138,7 +138,7 @@ You are a helpful agent.
 | PROMPTS.md 含 prompt 与问题记录 | [x] | `PROMPTS.md` |
 | 单测全绿 (mock LLM) | [x] | 108 passed |
 
-**Status**: S1-S6 代码全部完成, mock-LLM 测试全绿 (108 passed)。真实 DeepSeek API 多轮对话集成 = 待手动验证 (需配置有效 API Key 实跑)。
+**Status**: S1-S6 代码全部完成, mock-LLM 测试全绿 (108 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。
 
 ---
 
