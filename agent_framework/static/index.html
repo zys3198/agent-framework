@@ -537,7 +537,10 @@ async function loadSessionDetail(sid) {
     var msgs = detail.messages || [];
     msgs.forEach(function (m) {
       var role = m.role || "assistant";
-      addMessage(role, m.content || "");
+      // skip empty assistant/tool bubbles (carrier / internal detail)
+      if (!(m.content || "")) return;
+      if (role === "tool") return;
+      addMessage(role, m.content);
     });
     loadSessions();
     inputEl.focus();
