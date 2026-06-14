@@ -60,11 +60,11 @@ class Store:
 
     def delete(self, session_id: str) -> bool:
         """Remove a session file. Returns True if a file was deleted."""
-        p = self._path(session_id)
-        if p.exists():
-            p.unlink()
+        try:
+            self._path(session_id).unlink()
             return True
-        return False
+        except FileNotFoundError:
+            return False
 
     def list(self) -> list[dict[str, Any]]:
         out = []
