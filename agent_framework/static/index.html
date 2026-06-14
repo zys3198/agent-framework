@@ -3,197 +3,308 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>agent-framework chat</title>
+<title>agent-framework</title>
 <style>
+  :root {
+    --bg: #f6f3ee;
+    --surface: #ffffff;
+    --surface-2: #efeae0;
+    --surface-3: #e7e0d3;
+    --text: #221f1a;
+    --text-soft: #4a443b;
+    --muted: #968d80;
+    --faint: #bbb2a3;
+    --border: #e6dfd2;
+    --border-strong: #d6cdbb;
+    --accent: #c2410c;
+    --accent-hover: #9a3409;
+    --accent-soft: #fdf2e6;
+    --accent-border: #f3c9a4;
+    --tool-bg: #faf7f0;
+    --shadow: 0 1px 2px rgba(60, 45, 20, 0.04), 0 4px 16px rgba(60, 45, 20, 0.05);
+    --radius: 14px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: #f5f5f5;
-    color: #1a1a1a;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
     display: flex;
     height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* ---------- sidebar ---------- */
   #sidebar {
-    width: 240px;
-    background: #1e1e2e;
-    color: #cdd6f4;
+    width: 264px;
+    background: var(--surface-2);
     display: flex;
     flex-direction: column;
-    border-right: 1px solid #313244;
+    border-right: 1px solid var(--border);
     flex-shrink: 0;
   }
   #sidebar header {
-    padding: 14px 16px;
-    font-size: 14px;
+    padding: 18px 18px 14px;
+    font-size: 12px;
     font-weight: 600;
-    border-bottom: 1px solid #313244;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
   #sidebar header button {
-    background: #89b4fa;
-    color: #1e1e2e;
+    background: transparent;
+    color: var(--muted);
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     padding: 4px 8px;
     font-size: 12px;
     cursor: pointer;
+    transition: background 0.15s, color 0.15s;
   }
-  #sidebar header button:hover { background: #74a0f7; }
+  #sidebar header button:hover { background: var(--surface-3); color: var(--text); }
   #session-list {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 10px;
   }
   .session-item {
-    padding: 8px 10px;
-    border-radius: 6px;
+    padding: 9px 11px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 13px;
-    margin-bottom: 4px;
+    font-size: 13.5px;
+    margin-bottom: 2px;
+    color: var(--text-soft);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    border-left: 2px solid transparent;
+    transition: background 0.15s, color 0.15s;
   }
-  .session-item:hover { background: #313244; }
-  .session-item.active { background: #45475a; }
+  .session-item:hover { background: var(--surface-3); color: var(--text); }
+  .session-item.active {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+    color: var(--text);
+    font-weight: 500;
+  }
   .session-meta {
     font-size: 11px;
-    color: #6c7086;
-    margin-top: 2px;
+    color: var(--faint);
+    margin-top: 3px;
+    letter-spacing: 0.02em;
   }
   #sidebar-footer {
-    padding: 10px 16px;
+    padding: 12px 18px 16px;
     font-size: 11px;
-    color: #6c7086;
-    border-top: 1px solid #313244;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
     word-break: break-all;
+    line-height: 1.5;
+  }
+  #sidebar-footer #current-sid {
+    color: var(--text-soft);
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 10.5px;
   }
 
-  /* ---------- main chat ---------- */
+  /* ---------- main ---------- */
   #main {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
+    background: var(--bg);
   }
   #topbar {
-    padding: 12px 20px;
-    background: #fff;
-    border-bottom: 1px solid #e0e0e0;
-    font-size: 14px;
+    padding: 16px 28px;
+    font-size: 15px;
     font-weight: 600;
+    letter-spacing: -0.01em;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    color: var(--text);
+  }
+  #topbar span::before {
+    content: "◆";
+    color: var(--accent);
+    margin-right: 8px;
+    font-size: 12px;
+    vertical-align: 1px;
   }
   #new-chat-btn {
-    background: #4a9eff;
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 6px 14px;
+    background: transparent;
+    color: var(--text-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 7px 14px;
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
+    transition: all 0.15s;
   }
-  #new-chat-btn:hover { background: #3a8eef; }
+  #new-chat-btn:hover {
+    background: var(--surface);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 
+  /* ---------- messages ---------- */
   #messages {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: 8px 28px 24px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 18px;
+    max-width: 820px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  #messages:empty::before {
+    content: "开始对话 — 试试「算 123 乘以 456」或「建一个待办：写周报」";
+    color: var(--faint);
+    font-size: 14px;
+    text-align: center;
+    margin: auto;
+    padding: 60px 20px;
+    line-height: 1.7;
+  }
+  .role-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 6px;
   }
   .msg {
-    max-width: 72%;
-    padding: 10px 14px;
-    border-radius: 12px;
-    font-size: 14px;
-    line-height: 1.5;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 15px;
+    line-height: 1.65;
     white-space: pre-wrap;
     word-break: break-word;
+    max-width: 78%;
   }
   .msg.user {
     align-self: flex-end;
-    background: #4a9eff;
-    color: #fff;
+    background: var(--accent-soft);
+    color: var(--text);
+    border: 1px solid var(--accent-border);
     border-bottom-right-radius: 4px;
   }
   .msg.assistant {
     align-self: flex-start;
-    background: #fff;
-    color: #1a1a1a;
-    border: 1px solid #e0e0e0;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-bottom-left-radius: 4px;
+    box-shadow: var(--shadow);
   }
   .msg.tool {
     align-self: flex-start;
-    background: #f0f9eb;
-    color: #5a7a3a;
-    border: 1px dashed #b0d090;
-    font-family: "Cascadia Code", Consolas, monospace;
-    font-size: 13px;
+    background: var(--tool-bg);
+    color: var(--text-soft);
+    border: 1px dashed var(--border-strong);
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
     border-bottom-left-radius: 4px;
-  }
-  .msg.role-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    opacity: 0.6;
-    margin-bottom: 4px;
+    max-width: 88%;
   }
 
-  #input-area {
+  .typing {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    border-bottom-left-radius: 4px;
     padding: 16px 20px;
-    background: #fff;
-    border-top: 1px solid #e0e0e0;
+    font-size: 14px;
+    color: var(--muted);
+    box-shadow: var(--shadow);
+  }
+  .typing::before {
+    content: "·  ·  ·";
+    letter-spacing: 0.3em;
+    color: var(--accent);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+
+  /* ---------- input ---------- */
+  #input-area {
+    padding: 14px 28px 22px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  #input-area > div {
+    max-width: 820px;
+    margin: 0 auto;
     display: flex;
     gap: 10px;
+    align-items: center;
   }
   #input {
     flex: 1;
-    border: 1px solid #d0d0d0;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 14px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    border-radius: 14px;
+    padding: 13px 18px;
+    font-size: 15px;
+    color: var(--text);
     outline: none;
     font-family: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-shadow: var(--shadow);
   }
-  #input:focus { border-color: #4a9eff; }
+  #input::placeholder { color: var(--faint); }
+  #input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
   #send {
-    background: #4a9eff;
+    background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 8px;
-    padding: 0 22px;
+    border-radius: 14px;
+    padding: 0 24px;
+    height: 48px;
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
+    transition: background 0.15s, transform 0.1s;
   }
-  #send:hover { background: #3a8eef; }
-  #send:disabled { background: #b0b0b0; cursor: not-allowed; }
+  #send:hover { background: var(--accent-hover); }
+  #send:active { transform: scale(0.97); }
+  #send:disabled { background: var(--faint); cursor: not-allowed; }
 
-  .typing {
-    align-self: flex-start;
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
-    padding: 10px 14px;
-    font-size: 14px;
-    color: #999;
+  /* ---------- scrollbar ---------- */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 4px;
   }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
-  /* ---------- responsive ---------- */
-  @media (max-width: 640px) {
+  @media (max-width: 720px) {
     #sidebar { display: none; }
-    .msg { max-width: 90%; }
+    #messages, #input-area > div { max-width: 100%; }
+    .msg { max-width: 92%; }
+    #messages, #input-area { padding-left: 16px; padding-right: 16px; }
+    #topbar { padding: 14px 16px; }
   }
 </style>
 </head>
@@ -202,12 +313,12 @@
 <div id="sidebar">
   <header>
     <span>Sessions</span>
-    <button id="refresh-btn" title="Refresh session list">reload</button>
+    <button id="refresh-btn" title="Refresh session list">⟳</button>
   </header>
   <div id="session-list"></div>
   <div id="sidebar-footer">
-    <div>session:</div>
-    <div id="current-sid" style="color:#a6adc8;"></div>
+    <div>session</div>
+    <div id="current-sid"></div>
   </div>
 </div>
 
@@ -218,15 +329,16 @@
   </div>
   <div id="messages"></div>
   <div id="input-area">
-    <input id="input" type="text" placeholder="Type a message..." autocomplete="off">
-    <button id="send">Send</button>
+    <div>
+      <input id="input" type="text" placeholder="ask anything…" autocomplete="off">
+      <button id="send">Send</button>
+    </div>
   </div>
 </div>
 
 <script>
 "use strict";
 
-/* ---------- session id management ---------- */
 function getOrCreateSid() {
   let sid = localStorage.getItem("session_id");
   if (!sid) {
@@ -238,10 +350,16 @@ function getOrCreateSid() {
   return sid;
 }
 
-var currentSid = getOrCreateSid();
-document.getElementById("current-sid").textContent = currentSid;
+function shortSid(s) {
+  return s.length > 12 ? s.slice(0, 8) + "…" + s.slice(-4) : s;
+}
+function renderSid() {
+  document.getElementById("current-sid").textContent = shortSid(currentSid);
+}
 
-/* ---------- DOM helpers ---------- */
+var currentSid = getOrCreateSid();
+renderSid();
+
 var messagesEl = document.getElementById("messages");
 var inputEl = document.getElementById("input");
 var sendBtn = document.getElementById("send");
@@ -269,7 +387,7 @@ function addTyping() {
   var el = document.createElement("div");
   el.className = "typing";
   el.id = "typing-indicator";
-  el.textContent = "thinking...";
+  el.textContent = "";
   messagesEl.appendChild(el);
   scrollBottom();
 }
@@ -279,7 +397,6 @@ function removeTyping() {
   if (el) el.remove();
 }
 
-/* ---------- send a chat message ---------- */
 async function sendChat() {
   var text = inputEl.value.trim();
   if (!text) return;
@@ -308,7 +425,7 @@ async function sendChat() {
     if (data.session_id && data.session_id !== currentSid) {
       currentSid = data.session_id;
       localStorage.setItem("session_id", currentSid);
-      document.getElementById("current-sid").textContent = currentSid;
+      renderSid();
     }
     loadSessions();
   } catch (e) {
@@ -328,16 +445,14 @@ inputEl.addEventListener("keydown", function (e) {
   }
 });
 
-/* ---------- new chat ---------- */
 document.getElementById("new-chat-btn").addEventListener("click", function () {
   localStorage.removeItem("session_id");
   currentSid = getOrCreateSid();
-  document.getElementById("current-sid").textContent = currentSid;
+  renderSid();
   messagesEl.innerHTML = "";
   inputEl.focus();
 });
 
-/* ---------- sessions sidebar ---------- */
 async function loadSessions() {
   try {
     var resp = await fetch("/sessions");
@@ -349,7 +464,7 @@ async function loadSessions() {
       item.className = "session-item";
       if (row.id === currentSid) item.classList.add("active");
       var title = document.createElement("div");
-      title.textContent = row.id;
+      title.textContent = row.title || shortSid(row.id);
       var meta = document.createElement("div");
       meta.className = "session-meta";
       meta.textContent = (row.fsm_state || "IDLE") + " . todos:" + (row.todo_count || 0);
@@ -372,7 +487,7 @@ async function loadSessionDetail(sid) {
     var detail = await resp.json();
     currentSid = sid;
     localStorage.setItem("session_id", sid);
-    document.getElementById("current-sid").textContent = sid;
+    renderSid();
     messagesEl.innerHTML = "";
     var msgs = detail.messages || [];
     msgs.forEach(function (m) {
@@ -386,7 +501,6 @@ async function loadSessionDetail(sid) {
   }
 }
 
-/* ---------- init ---------- */
 loadSessions();
 inputEl.focus();
 </script>

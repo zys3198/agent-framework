@@ -43,9 +43,15 @@ def test_list_returns_summaries(tmp_path):
     store.save(s)
     store.load("sid-2")
     store.save(store.load("sid-2"))
+    s3 = store.load("sid-3")
+    s3.messages.append(Message(role="user", content="帮我算 123 乘以 456"))
+    store.save(s3)
 
     items = store.list()
     ids = {it["id"] for it in items}
-    assert ids == {"sid-1", "sid-2"}
+    assert ids == {"sid-1", "sid-2", "sid-3"}
     s1 = next(i for i in items if i["id"] == "sid-1")
     assert s1["todo_count"] == 1
+    assert s1["title"] == "新会话"
+    s3row = next(i for i in items if i["id"] == "sid-3")
+    assert s3row["title"] == "帮我算 123 乘以 456"

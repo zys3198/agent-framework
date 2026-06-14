@@ -11,6 +11,16 @@ from session.models import Session
 log = logging.getLogger(__name__)
 
 
+def _derive_title(d: dict[str, Any]) -> str:
+    """Session display title: first user message (truncated), else '新会话'."""
+    for m in d.get("messages", []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            text = (m.get("content") or "").strip()
+            if text:
+                return text[:30]
+    return "新会话"
+
+
 class Store:
     """JSON 持久化. 原子写 (tmp + os.replace), 损坏文件备份后重建."""
 
@@ -56,6 +66,7 @@ class Store:
                 out.append(
                     {
                         "id": d["id"],
+                        "title": _derive_title(d),
                         "todo_count": len(d.get("memory", {}).get("todos", [])),
                         "updated_at": d.get("updated_at", ""),
                         "fsm_state": d.get("fsm_state", "IDLE"),
