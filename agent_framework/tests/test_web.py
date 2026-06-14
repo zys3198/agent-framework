@@ -170,3 +170,29 @@ def test_delete_path_traversal_safe(client: TestClient, tmp_path: Path) -> None:
     assert resp.status_code == 404
     assert not (tmp_path / "passwd.json").exists()
     assert not (tmp_path.parent / "passwd.json").exists()
+
+
+def test_delete_trace_unlink_failure_degrades(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # PermissionError on the held-open trace handle (Windows) must not 500:
+    # session is deleted, trace is left + reported as not-deleted.
+    sid = "locked-trace"
+    store = Store(tmp_path)
+    store.save(store.load(sid))
+    (tmp_path / f"{sid}.jsonl").write_text('{"event": "x"}\n', encoding="utf-8")
+
+    real_unlink = Path.unlink
+
+    def boom_on_jsonl(self: Path, *args: object, **kwargs: object) -> object:
+        if self.name.endswith(".jsonl"):
+            raise PermissionError(13, "file locked", str(self))
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", boom_on_jsonl)
+
+    resp = client.delete(f"/sessions/{sid}")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": True, "session": True, "trace": False}
+    assert not (tmp_path / f"{sid}.json").exists()
+    assert (tmp_path / f"{sid}.jsonl").exists()

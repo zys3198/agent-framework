@@ -502,6 +502,13 @@ async function loadSessions() {
         fetch("/sessions/" + encodeURIComponent(row.id), { method: "DELETE" })
           .then(function (r) {
             if (!r.ok) return;
+            // Body carries per-artifact flags; trace may survive if its file
+            // was locked by an in-flight /chat (best-effort delete).
+            r.json().then(function (d) {
+              if (d && d.trace === false) {
+                console.warn("trace 文件未移除（可能被占用）: " + row.id);
+              }
+            }).catch(function () {});
             if (row.id === currentSid) {
               localStorage.removeItem("session_id");
               currentSid = getOrCreateSid();

@@ -132,15 +132,17 @@ def create_app(agent: Agent | None, store: Store, trace_dir: Path) -> FastAPI:
     def delete_session(session_id: str) -> dict[str, Any]:
         session_deleted = store.delete(session_id)
         trace_path = _trace_path(trace_dir, session_id)
-        # Best-effort: TraceLogger may hold the jsonl handle open for an
-        # in-flight /chat (esp. Windows), so unlink can raise PermissionError.
+        # Atomic: unlink raises FileNotFoundError if absent (no is_file TOCTOU),
+        # PermissionError if TraceLogger still holds the handle for an in-flight
+        # /chat (esp. Windows). Both are OSError subclasses.
         trace_deleted = False
-        if trace_path.is_file():
-            try:
-                trace_path.unlink()
-                trace_deleted = True
-            except OSError as e:
-                log.warning("trace delete failed for %s: %s", session_id, e)
+        try:
+            trace_path.unlink()
+            trace_deleted = True
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.warning("trace delete failed for %s: %s", session_id, e)
         if not session_deleted and not trace_deleted:
             raise HTTPException(status_code=404, detail="session not found")
         return {"deleted": True, "session": session_deleted, "trace": trace_deleted}
