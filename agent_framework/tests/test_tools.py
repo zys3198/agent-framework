@@ -22,7 +22,7 @@ class FakeTool:
 def test_register_and_dispatch():
     reg = ToolRegistry()
     reg.register(FakeTool())
-    assert "fake" in reg.names()
+    assert any(s["name"] == "fake" for s in reg.schemas())
 
     res = asyncio.run(
         reg.dispatch(ToolCall(name="fake", args={"x": 1}), Session(id="s"))

@@ -45,9 +45,6 @@ class TraceLogger:
     def log_reflexion(self, step: int, lesson: str) -> None:
         self._emit({"type": "reflexion", "step": step, "lesson": lesson})
 
-    def log_fsm(self, frm: str, to: str) -> None:
-        self._emit({"type": "fsm", "from": frm, "to": to})
-
     def log_truncated(self) -> None:
         self._emit({"type": "truncated"})
 

@@ -18,7 +18,6 @@ def test_memory_defaults():
 def test_session_defaults():
     s = Session(id="sid-1")
     assert s.fsm_state == "IDLE"
-    assert s.step_count == 0
     assert s.memory.todos == []
     assert s.messages == []
 
@@ -37,26 +36,23 @@ def test_to_dict_roundtrip():
 
 
 def test_step_roundtrip():
-    s = Step(prompt="do A", is_rewoo_cluster=False, done=False)
+    s = Step(prompt="do A", is_rewoo_cluster=False)
     d = s.to_dict()
-    assert d == {"prompt": "do A", "is_rewoo_cluster": False, "done": False}
+    assert d == {"prompt": "do A", "is_rewoo_cluster": False}
     s2 = Step.from_dict(d)
     assert s2.prompt == "do A"
     assert s2.is_rewoo_cluster is False
-    assert s2.done is False
 
 
 def test_step_defaults():
     s = Step(prompt="x")
     assert s.is_rewoo_cluster is False
-    assert s.done is False
 
 
 def test_step_from_dict_tolerates_str():
     # old session files stored plan items as raw strings
     s = Step.from_dict("legacy step text")
     assert s.prompt == "legacy step text"
-    assert s.done is False
 
 
 def test_step_from_dict_tolerates_extra_keys():
@@ -66,12 +62,10 @@ def test_step_from_dict_tolerates_extra_keys():
 
 def test_memory_plan_step_roundtrip():
     m = Memory()
-    m.plan.append(Step(prompt="step one", done=True))
+    m.plan.append(Step(prompt="step one"))
     m.plan.append(Step(prompt="step two"))
     d = m.to_dict()
-    assert d["plan"][0] == {"prompt": "step one", "is_rewoo_cluster": False, "done": True}
+    assert d["plan"][0] == {"prompt": "step one", "is_rewoo_cluster": False}
     m2 = Memory.from_dict(d)
     assert len(m2.plan) == 2
     assert m2.plan[0].prompt == "step one"
-    assert m2.plan[0].done is True
-    assert m2.plan[1].done is False

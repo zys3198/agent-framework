@@ -35,7 +35,6 @@ class TodoItem:
 class Step:
     prompt: str
     is_rewoo_cluster: bool = False  # S4 ReWOO marker; unused in S3
-    done: bool = False  # completed steps are skipped on replan rerun
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -49,7 +48,6 @@ class Step:
         return cls(
             prompt=d["prompt"],
             is_rewoo_cluster=d.get("is_rewoo_cluster", False),
-            done=d.get("done", False),
         )
 
 
@@ -110,7 +108,6 @@ class Session:
     fsm_state: str = "IDLE"
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
-    step_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,7 +117,6 @@ class Session:
             "fsm_state": self.fsm_state,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "step_count": self.step_count,
         }
 
     @classmethod
@@ -132,5 +128,4 @@ class Session:
             fsm_state=d.get("fsm_state", "IDLE"),
             created_at=d.get("created_at", _now()),
             updated_at=d.get("updated_at", _now()),
-            step_count=d.get("step_count", 0),
         )

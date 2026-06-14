@@ -31,9 +31,6 @@ class ToolRegistry:
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
 
-    def names(self) -> list[str]:
-        return list(self._tools)
-
     def schemas(self) -> list[dict[str, Any]]:
         return [
             {"name": t.name, "description": t.description, "parameters": t.parameters}

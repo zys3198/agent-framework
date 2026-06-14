@@ -11,7 +11,6 @@ def test_defaults_when_env_missing(monkeypatch):
     assert config_mod.MAX_STEPS == 10
     assert config_mod.MAX_REPLANS == 2
     assert config_mod.MODEL == "deepseek-chat"
-    assert config_mod.REWOO_PARALLEL_ENABLED is True
     assert config_mod.HOST == "127.0.0.1"
     assert config_mod.PORT == 8000
 

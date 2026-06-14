@@ -137,15 +137,12 @@ def _new_session_id() -> str:
 
 
 def _build_default_app() -> FastAPI:
+    store = Store(config.SESSION_DIR)
     try:
         agent = build_agent()
-        store = agent._store
-        trace_dir = config.TRACE_DIR
     except RuntimeError:
         agent = None
-        store = Store(config.SESSION_DIR)
-        trace_dir = config.TRACE_DIR
-    return create_app(agent, store, trace_dir)
+    return create_app(agent, store, config.TRACE_DIR)
 
 
 app = _build_default_app()

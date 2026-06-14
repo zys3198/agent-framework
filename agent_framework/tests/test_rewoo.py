@@ -2,7 +2,7 @@ import inspect
 from typing import ClassVar
 
 from runtime.rewoo import DagNode, ReWOO
-from session.models import Memory, Session
+from session.models import Session
 from tools.base import ToolRegistry
 
 
@@ -69,7 +69,7 @@ async def test_run_executes_and_solves(tmp_path):
     ])
     rw = ReWOO(llm=llm, registry=_registry())
     s = Session(id="s")
-    out = await rw.run(s, Memory(), "do task", 0, TraceLogger(tmp_path / "t.jsonl"))
+    out = await rw.run(s, "do task", 0, TraceLogger(tmp_path / "t.jsonl"))
     assert out.text == "final synthesis"
     assert out.needs_replan is False
     assert s.memory.workspace.get("E1") == "echo:hello"
@@ -83,7 +83,7 @@ async def test_run_insufficient_evidence_triggers_replan(tmp_path):
         '{"answer":"not enough info","evidence_sufficient":false}',
     ])
     rw = ReWOO(llm=llm, registry=_registry())
-    out = await rw.run(Session(id="s"), Memory(), "do task", 0, TraceLogger(tmp_path / "t.jsonl"))
+    out = await rw.run(Session(id="s"), "do task", 0, TraceLogger(tmp_path / "t.jsonl"))
     assert out.needs_replan is True
     assert out.text == "not enough info"
 
@@ -93,7 +93,7 @@ async def test_run_empty_dag_falls_back(tmp_path):
 
     llm = ScriptedLLM(["no json", '{"answer":"empty","evidence_sufficient":true}'])
     rw = ReWOO(llm=llm, registry=_registry())
-    out = await rw.run(Session(id="s"), Memory(), "task", 0, TraceLogger(tmp_path / "t.jsonl"))
+    out = await rw.run(Session(id="s"), "task", 0, TraceLogger(tmp_path / "t.jsonl"))
     assert out.text == "empty"
     assert out.needs_replan is False
 

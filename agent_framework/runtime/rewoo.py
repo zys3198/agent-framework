@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from runtime.planner import _extract_json
+
 if TYPE_CHECKING:
     from llm.client import LLMClient
     from runtime.executor import Outcome
-    from session.models import Memory, Session
+    from session.models import Session
     from tools.base import ToolRegistry
     from trace.logger import TraceLogger
 
@@ -37,19 +38,6 @@ class DagNode:
     deps: list[str] = field(default_factory=list)
 
 
-def _extract_json(text: str) -> dict[str, Any] | None:
-    if not text:
-        return None
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
 class ReWOO:
     """Micro-parallel sub-mode (C'): plan DAG -> worker (tool dispatch, no LLM)
     -> solver (one synthesis). evidence insufficient -> needs_replan (C' -> D')."""
@@ -60,10 +48,12 @@ class ReWOO:
 
     @staticmethod
     def _substitute(args: dict[str, str], workspace: dict[str, Any]) -> dict[str, str]:
-        def _repl(value: str) -> str:
-            return _VAR.sub(lambda m: str(workspace.get(m.group(1), m.group(0))), str(value))
-
-        return {k: _repl(v) for k, v in args.items()}
+        return {
+            k: _VAR.sub(
+                lambda m: str(workspace.get(m.group(1), m.group(0))), str(v)
+            )
+            for k, v in args.items()
+        }
 
     def _plan_dag(self, task: str) -> list[DagNode]:
         text = self._llm.respond(
@@ -127,7 +117,6 @@ class ReWOO:
     async def run(
         self,
         session: Session,
-        memory: Memory,
         task: str,
         step: int,
         trace: TraceLogger,

@@ -50,7 +50,6 @@ async def test_make_plan_returns_steps():
     planner = Planner(llm)
     plan = await planner.make_plan("do X then Y", Memory())
     assert [s.prompt for s in plan] == ["search X", "calculate Y"]
-    assert all(not s.done for s in plan)
     assert llm.calls == 1
 
 

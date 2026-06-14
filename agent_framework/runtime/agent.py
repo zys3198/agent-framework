@@ -5,9 +5,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from runtime.fsm import State
 from session.models import Memory, Message
 from trace.logger import TraceLogger
+
+STATE_IDLE = "IDLE"
+STATE_PLANNING = "PLANNING"
+STATE_EXECUTING = "EXECUTING"
+STATE_REFLECTING = "REFLECTING"
+STATE_WAITING = "WAITING"
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -73,15 +78,15 @@ class Agent:
         from runtime.router import Route
 
         session = self._store.load(session_id)
-        session.fsm_state = State.ROUTING.value
+        session.fsm_state = STATE_IDLE
 
-        trace = TraceLogger(self._trace_dir / f"{session_id}.jsonl")
+        trace = TraceLogger(self._trace_dir / f"{Path(session_id).name}.jsonl")
         try:
             route = await self._router.classify(user_input, session.memory)
             trace.log_route(route.value)
 
             if route == Route.DIRECT:
-                session.fsm_state = State.RESPONDING.value
+                session.fsm_state = STATE_WAITING
                 sys_msg = build_system_prompt(session.memory)
                 messages = [{"role": "system", "content": sys_msg}] + [
                     m.to_dict() for m in session.messages
@@ -95,16 +100,16 @@ class Agent:
 
             elif route == Route.SIMPLE_TOOL:
                 # Executor owns all session.messages persistence on this path (Contract C).
-                session.fsm_state = State.EXECUTING.value
+                session.fsm_state = STATE_EXECUTING
                 outcome = await self._executor.run(session, user_input, trace)
-                session.fsm_state = State.RESPONDING.value
+                session.fsm_state = STATE_WAITING
                 answer = outcome.text
 
             else:  # PLAN_REQUIRED
-                session.fsm_state = State.PLANNING.value
+                session.fsm_state = STATE_PLANNING
                 plan = await self._planner.make_plan(user_input, session.memory)
                 session.memory.plan = plan
-                session.fsm_state = State.EXECUTING.value
+                session.fsm_state = STATE_EXECUTING
 
                 results: dict[int, object] = {}
                 replans = 0
@@ -112,7 +117,7 @@ class Agent:
                 while i < len(plan):
                     if plan[i].is_rewoo_cluster:
                         outcome = await self._rewoo.run(
-                            session, session.memory, plan[i].prompt, i, trace
+                            session, plan[i].prompt, i, trace
                         )
                     else:
                         outcome = await self._executor.run(
@@ -120,7 +125,7 @@ class Agent:
                         )
                     results[i] = outcome
                     if outcome.needs_replan and replans < self._max_replans:
-                        session.fsm_state = State.REPLANNING.value
+                        session.fsm_state = STATE_PLANNING
                         revised = await self._replanner.revise(
                             plan[i:], results, session.memory
                         )
@@ -128,7 +133,7 @@ class Agent:
                         replans += 1
                         session.memory.plan = plan
                         trace.log_replan(replans, "needs_replan", len(revised))
-                        session.fsm_state = State.EXECUTING.value
+                        session.fsm_state = STATE_EXECUTING
                         continue  # re-run index i (= first revised step)
                     i += 1
 
@@ -145,10 +150,10 @@ class Agent:
                     )
                 # Contract C: agent appends ONLY the synthesized final answer here;
                 # per-step messages were persisted by the executor.
-                session.fsm_state = State.RESPONDING.value
+                session.fsm_state = STATE_WAITING
                 session.messages.append(Message(role="assistant", content=answer))
 
-            session.fsm_state = State.IDLE.value
+            session.fsm_state = STATE_IDLE
             session.updated_at = _now()  # Store.save does not refresh it
             self._store.save(session)
             return answer

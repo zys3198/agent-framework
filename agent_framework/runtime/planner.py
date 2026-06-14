@@ -27,14 +27,9 @@ def _parse_steps(text: str) -> list[str]:
     """
     if not text:
         return []
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            data = None
-        if isinstance(data, dict) and isinstance(data.get("steps"), list):
-            return [str(s).strip() for s in data["steps"] if str(s).strip()]
+    data = _extract_json(text)
+    if data and isinstance(data.get("steps"), list):
+        return [str(s).strip() for s in data["steps"] if str(s).strip()]
     out: list[str] = []
     for line in text.splitlines():
         cleaned = _LEAD.sub("", line).strip()
@@ -44,9 +39,6 @@ def _parse_steps(text: str) -> list[str]:
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
-    import json
-    import re
-
     if not text:
         return None
     match = re.search(r"\{.*\}", text, re.DOTALL)
