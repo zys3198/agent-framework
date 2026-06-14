@@ -36,6 +36,21 @@ def test_corrupt_json_recovers(tmp_path):
     assert len(backups) == 1
 
 
+def test_delete_removes_session(tmp_path):
+    store = Store(tmp_path)
+    s = store.load("sid-del")
+    s.messages.append(Message(role="user", content="hi"))
+    store.save(s)
+    assert (tmp_path / "sid-del.json").exists()
+    assert store.delete("sid-del") is True
+    assert not (tmp_path / "sid-del.json").exists()
+
+
+def test_delete_missing_returns_false(tmp_path):
+    store = Store(tmp_path)
+    assert store.delete("nope") is False
+
+
 def test_list_returns_summaries(tmp_path):
     store = Store(tmp_path)
     s = store.load("sid-1")

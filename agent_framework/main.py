@@ -125,6 +125,17 @@ def create_app(agent: Agent | None, store: Store, trace_dir: Path) -> FastAPI:
     def get_trace(session_id: str) -> list[dict[str, Any]]:
         return _read_trace(_trace_path(trace_dir, session_id))
 
+    @app.delete("/sessions/{session_id}")
+    def delete_session(session_id: str) -> dict[str, Any]:
+        session_deleted = store.delete(session_id)
+        trace_path = _trace_path(trace_dir, session_id)
+        trace_deleted = trace_path.is_file()
+        if trace_deleted:
+            trace_path.unlink()
+        if not session_deleted and not trace_deleted:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"deleted": True, "session": session_deleted, "trace": trace_deleted}
+
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(str(static_dir / "index.html"))

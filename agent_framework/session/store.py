@@ -58,6 +58,14 @@ class Store:
         )
         os.replace(tmp, p)
 
+    def delete(self, session_id: str) -> bool:
+        """Remove a session file. Returns True if a file was deleted."""
+        p = self._path(session_id)
+        if p.exists():
+            p.unlink()
+            return True
+        return False
+
     def list(self) -> list[dict[str, Any]]:
         out = []
         for p in sorted(self.root.glob("*.json")):

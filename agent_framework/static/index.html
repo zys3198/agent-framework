@@ -74,6 +74,7 @@
     padding: 10px;
   }
   .session-item {
+    position: relative;
     padding: 9px 11px;
     border-radius: 8px;
     cursor: pointer;
@@ -93,6 +94,24 @@
     color: var(--text);
     font-weight: 500;
   }
+  .session-del {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: var(--faint);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 5px;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+  }
+  .session-item:hover .session-del { opacity: 1; }
+  .session-del:hover { background: #f6d6cd; color: #b91c1c; }
   .session-meta {
     font-size: 11px;
     color: var(--faint);
@@ -473,6 +492,27 @@ async function loadSessions() {
       meta.textContent = (row.fsm_state || "IDLE") + " . todos:" + (row.todo_count || 0);
       item.appendChild(title);
       item.appendChild(meta);
+      var del = document.createElement("button");
+      del.className = "session-del";
+      del.title = "删除会话";
+      del.textContent = "×";
+      del.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        if (!confirm("删除此会话？")) return;
+        fetch("/sessions/" + encodeURIComponent(row.id), { method: "DELETE" })
+          .then(function (r) {
+            if (!r.ok) return;
+            if (row.id === currentSid) {
+              localStorage.removeItem("session_id");
+              currentSid = getOrCreateSid();
+              messagesEl.innerHTML = "";
+              setFooterTitle("新会话");
+            }
+            loadSessions();
+          })
+          .catch(function () {});
+      });
+      item.appendChild(del);
       item.addEventListener("click", function () { loadSessionDetail(row.id); });
       sessionListEl.appendChild(item);
     });

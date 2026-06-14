@@ -13,15 +13,25 @@ cd agent_framework
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"
 
-# 设置 DeepSeek API Key (不设则 app 以只读模式启动, /chat 返回 503)
-export DEEPSEEK_API_KEY=sk-your-key-here
+# 配置 DeepSeek API Key —— 方式 A（推荐，.env 加载）
+cp .env.example .env
+#   编辑 .env 填入 DEEPSEEK_API_KEY=sk-...
+# 方式 B：环境变量
+export DEEPSEEK_API_KEY=sk-...
 
-# 启动 (在 agent_framework/ 目录内)
+# 启动（在 agent_framework/ 目录内）
 .venv/Scripts/python -m uvicorn main:app
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
-**无 API Key 时**: app 正常启动, `/sessions`、`/trace` 等只读路由可用; `/chat` 返回 503 (`DEEPSEEK_API_KEY not configured`)。
+**无 API Key 时**: app 正常启动, `/sessions`、`/trace` 等只读路由可用; `/chat` 返回 503 (`DEEPSEEK_API_KEY not configured`)。`.env` 被 `.gitignore` 忽略，不会泄露密钥。
+
+### 前端
+
+暖色极简聊天 UI（`static/index.html`，单文件 vanilla JS，无构建步骤）：
+- 侧栏会话列表（标题 = 首条消息派生；空会话显示「新会话」），hover 右侧 × 删除
+- 消息气泡（user 橙底 / assistant 白卡 / tool 等宽虚线框），`· · ·` thinking 动画
+- session_id 存 localStorage，刷新/重启不丢
 
 ### 提交前四件套 (全绿才提交)
 
@@ -47,7 +57,7 @@ cd agent_framework
 | D — Planner | `runtime/planner.py` | 复杂任务分解为有序 step 列表 (JSON 解析) |
 | C — Executor | `runtime/executor.py` | function-calling 循环: LLM <-> tool dispatch <-> result 回填 |
 | E — Reflexion | `runtime/reflexion.py` | 工具失败时学 lesson, 微观自纠 (同一步重试) |
-| F — FSM | `runtime/fsm.py` | session 级状态机, 校验合法状态转移 |
+| F — 状态跟踪 | `runtime/agent.py`（内联常量） | session 级状态（IDLE/PLANNING/EXECUTING/REFLECTING/WAITING），fsm 模块已删除（简化） |
 | D' — Replanner | `runtime/replanner.py` | 宏观自纠: 基于已执行结果修订剩余 plan |
 | C' — ReWOO | `runtime/rewoo.py` | 微观并行: plan DAG -> worker (tool 并行) -> solver 合成 |
 
@@ -131,14 +141,15 @@ You are a helpful agent.
 | Reflexion 重试耗尽触发 REPLANNING, MAX_REPLANS 截断生效 | [x] | mock 测试 (test_agent + test_integration) |
 | ReWOO: DAG 并行执行, 结果落 workspace, solver 合成 | [x] | mock 测试 (test_rewoo + test_agent) |
 | ReWOO solver 证据不足升级 REPLANNING | [x] | mock 测试 (test_rewoo) |
-| FSM 非法转移被拒 (含 REPLANNING 4 条新转移) | [x] | mock 测试 (test_fsm) |
-| section 5.4 四轮剧本: 进程重启后仍能读到前序 memory | [x] | mock 测试 (test_integration reload 不变量) |
+| 跨轮次继续执行（建 todo → 追问读回） | [x] | **真 API e2e 实跑通过** |
 | trace 完整记录每步, 前端可展示 | [x] | mock 测试 (test_trace + test_web) |
+| ≥3 工具 + 最大步数 + 异常处理 | [x] | calculator/search/todo；MAX_STEPS=10；工具错误回喂 LLM 不崩 |
+| 删除会话 | [x] | `DELETE /sessions/{id}` + 前端 × 按钮 |
 | README 含运行/设计/memory 三段 | [x] | 本文件 |
 | PROMPTS.md 含 prompt 与问题记录 | [x] | `PROMPTS.md` |
-| 单测全绿 (mock LLM) | [x] | 108 passed |
+| 单测全绿 (mock LLM) | [x] | 104 passed |
 
-**Status**: S1-S6 代码全部完成, mock-LLM 测试全绿 (108 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。
+**Status**: S1-S6 代码全部完成, mock-LLM 测试全绿 (104 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。
 
 ---
 
@@ -146,9 +157,9 @@ You are a helpful agent.
 
 ```bash
 cd agent_framework
-.venv/Scripts/python -m pytest -q    # 108 passed
+.venv/Scripts/python -m pytest -q    # 104 passed
 .venv/Scripts/python -m ruff check .  # All checks passed
-.venv/Scripts/python -m mypy          # Success: no issues found in 23 source files (strict)
+.venv/Scripts/python -m mypy          # Success: no issues found in 22 source files (strict)
 ```
 
 - **108 个测试** 全绿 (含 S6 新增 7 个回归测试 `test_integration.py`: Contract C 四消息序列 + id 配对、跨路径 user 互斥、build_system_prompt 纯函数、reload 不变量、replan 覆写、MAX_REPLANS cap)。
@@ -182,7 +193,7 @@ agent_framework/
     search.py          # 搜索 (mock)
     todo.py            # 待办管理
   trace/logger.py      # JSONL 执行日志
-  tests/               # 14 个测试文件, 108 passed
+  tests/               # 14 个测试文件, 104 passed
   static/index.html    # 前端 UI
 docs/superpowers/      # spec + 实现计划
 PROMPTS.md             # AI 辅助开发记录
