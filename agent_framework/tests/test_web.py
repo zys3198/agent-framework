@@ -136,3 +136,37 @@ def test_session_missing_returns_default(client: TestClient) -> None:
     d = resp.json()
     assert d["id"] == "never-saved"
     assert d["messages"] == []
+
+
+def test_delete_removes_session_and_trace(client: TestClient, tmp_path: Path) -> None:
+    sid = "del-sid"
+    store = Store(tmp_path)
+    store.save(store.load(sid))
+    (tmp_path / f"{sid}.jsonl").write_text('{"event": "x"}\n', encoding="utf-8")
+
+    resp = client.delete(f"/sessions/{sid}")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": True, "session": True, "trace": True}
+    assert not (tmp_path / f"{sid}.json").exists()
+    assert not (tmp_path / f"{sid}.jsonl").exists()
+
+
+def test_delete_404_when_both_missing(client: TestClient) -> None:
+    resp = client.delete("/sessions/never-existed")
+    assert resp.status_code == 404
+
+
+def test_delete_only_trace_still_200(client: TestClient, tmp_path: Path) -> None:
+    sid = "trace-only"
+    (tmp_path / f"{sid}.jsonl").write_text('{"event": "x"}\n', encoding="utf-8")
+    resp = client.delete(f"/sessions/{sid}")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": True, "session": False, "trace": True}
+
+
+def test_delete_path_traversal_safe(client: TestClient, tmp_path: Path) -> None:
+    # traversal id reduced to basename inside root; nothing outside deleted.
+    resp = client.delete("/sessions/..%2Fetc%2Fpasswd")
+    assert resp.status_code == 404
+    assert not (tmp_path / "passwd.json").exists()
+    assert not (tmp_path.parent / "passwd.json").exists()

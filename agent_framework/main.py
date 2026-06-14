@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,8 @@ from tools.base import ToolRegistry
 from tools.calculator import Calculator
 from tools.search import Search
 from tools.todo import Todo
+
+log = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -129,9 +132,15 @@ def create_app(agent: Agent | None, store: Store, trace_dir: Path) -> FastAPI:
     def delete_session(session_id: str) -> dict[str, Any]:
         session_deleted = store.delete(session_id)
         trace_path = _trace_path(trace_dir, session_id)
-        trace_deleted = trace_path.is_file()
-        if trace_deleted:
-            trace_path.unlink()
+        # Best-effort: TraceLogger may hold the jsonl handle open for an
+        # in-flight /chat (esp. Windows), so unlink can raise PermissionError.
+        trace_deleted = False
+        if trace_path.is_file():
+            try:
+                trace_path.unlink()
+                trace_deleted = True
+            except OSError as e:
+                log.warning("trace delete failed for %s: %s", session_id, e)
         if not session_deleted and not trace_deleted:
             raise HTTPException(status_code=404, detail="session not found")
         return {"deleted": True, "session": session_deleted, "trace": trace_deleted}
