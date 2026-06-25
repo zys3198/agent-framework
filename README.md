@@ -1,6 +1,6 @@
 # agent-framework
 
-从零实现的最小可用 Agent (自实现 runtime, 不依赖 LangChain / OpenHands)。多轮对话 + 会话持久化、基本循环 (输入 -> 判断直接答 / 调工具 -> 执行 -> 读结果 -> 继续)、>=3 个工具、DeepSeek (OpenAI 兼容) API、RePLANNING 动态重规划、ReWOO 计划/执行解耦 DAG、FastAPI Web 层。
+从零实现的最小可用 Agent (自实现 runtime, 不依赖 LangChain / OpenHands)。多轮对话 + 会话持久化、基本循环 (输入 -> 判断直接答 / 调工具 -> 执行 -> 读结果 -> 继续)、>=3 个工具、DeepSeek (OpenAI 兼容) API、Reflexion 微观自纠、file-based memory 系统 (索引/正文懒加载/异步召回/三层 compaction)、FastAPI Web 层。
 
 ---
 
@@ -47,9 +47,9 @@ cd agent_framework
 
 ## 系统设计
 
-分层 runtime + 会话级 FSM + Plan-and-Execute (宏观), 内含 REPLANNING (动态重规划) 与 ReWOO (微观计划/执行解耦)。完整 spec: `docs/superpowers/specs/2026-06-13-agent-framework-design.md`。
+分层 runtime (Router/Planner/Executor/Reflexion 四族) + Plan-and-Execute + file-based memory 系统 (Phase 2-4 新增)。完整 spec: `docs/superpowers/specs/2026-06-13-agent-framework-design.md`（§5.5 详述 memory system）。
 
-### 5+2 族分层 runtime
+### 族分层 runtime（现状 4 族；原 ReWOO/Replanner/FSM 在 Phase 0 删除）
 
 | 族 | 模块 | 职责 |
 |---|---|---|
@@ -57,46 +57,47 @@ cd agent_framework
 | D — Planner | `runtime/planner.py` | 复杂任务分解为有序 step 列表 (JSON 解析) |
 | C — Executor | `runtime/executor.py` | function-calling 循环: LLM <-> tool dispatch <-> result 回填 |
 | E — Reflexion | `runtime/reflexion.py` | 工具失败时学 lesson, 微观自纠 (同一步重试) |
-| F — 状态跟踪 | `runtime/agent.py`（内联常量） | session 级状态（IDLE/PLANNING/EXECUTING/REFLECTING/WAITING），fsm 模块已删除（简化） |
-| D' — Replanner | `runtime/replanner.py` | 宏观自纠: 基于已执行结果修订剩余 plan |
-| C' — ReWOO | `runtime/rewoo.py` | 微观并行: plan DAG -> worker (tool 并行) -> solver 合成 |
+| F — 状态跟踪 | `runtime/agent.py`（内联常量） | session 级状态字符串（IDLE/PLANNING/EXECUTING/REFLECTING/WAITING），独立 FSM 模块已删除 |
+
+> **已删（Phase 0，commit `f4c9de9`/`fdc9728`）**：~~D' Replanner~~（宏观重规划，dead path）、~~C' ReWOO~~（并行 DAG，function-calling 单步已支持并行 tool_call）、~~独立 FSM 模块~~（降级为字符串常量）。失败步不再重规划，改交 `synthesize` 标 `[STEP i FAILED]`。
 
 ### Agent 主循环
 
 ```
 Agent.chat(session_id, user_input)
-  -> store.load(session_id)        # 每轮开始: 拿回完整 Session
-  -> Router.classify()             # 族 I: 选路径
+  -> per-session asyncio.Lock       # 串行化 load->modify->save 事务
+  -> store.load(session_id)         # 每轮开始: 拿回完整 Session
+  -> Compactor.compact()            # Phase 3: 路由前先 compact (阈值下 no-op)
+  -> load_project_context()         # Phase 2: AGENTS.md 三层聚合 (每轮 fresh)
+  -> Router.classify()              # 族 I: 选路径
   -> {
        DIRECT:        LLM.respond() -> Agent 追加 user+assistant
-       SIMPLE_TOOL:   Executor.run() (族 C, 持有 session.messages 写权)
+       SIMPLE_TOOL:   Executor.run() (族 C, 持有 session.messages 写权 / Contract C)
        PLAN_REQUIRED: Planner.make_plan() (族 D)
-                      -> while (plan steps):
-                           Executor.run() 或 ReWOO.run() (族 C/C')
-                           if needs_replan && replans < MAX_REPLANS:
-                             Replanner.revise() (族 D') -> 覆写 plan
-                           else if needs_replan:  # cap
-                             续跑旧 plan 下一步
-                      -> LLM.synthesize() 合成最终答案
+                      -> for step in plan:        # Phase 0: 失败步不重规划
+                           Executor.run() (族 C+E, 含异步 memory 召回)
+                           needs_replan 仅记 trace
+                      -> LLM.synthesize() 合成最终答案 (失败步标 [STEP i FAILED])
      }
   -> store.save(session)           # 每轮结束: 全量落盘
 ```
 
-### ReWOO 子模式
+### ~~ReWOO 子模式~~（已删除，Phase 0）
 
-Planner 判断某步是"独立步骤簇"时标记 `is_rewoo_cluster=True`。Agent 执行到该步时调用 ReWOO 而非普通 Executor:
+> 初版实现过的微观并行子模式，Phase 0 证实为 dead path（实际任务不触发 + function-calling 单步已支持并行 tool_call）后删除。原设计如下，仅留作历史记录：
 
-1. **plan_dag**: LLM 出 DAG (`{"nodes":[{"id":"E1","tool":"...","args":{...},"deps":[]}]}`)
-2. **execute_dag**: worker 按依赖序跑工具, 绑 `${E1}` 变量引用上游结果, 结果落 `memory.workspace`
-3. **solve**: LLM 合成最终答案; 证据不足则升级 REPLANNING (C' -> D')
+1. **plan_dag**: LLM 出 DAG（worker 按依赖序跑工具，绑 `${E1}` 变量）
+2. **solve**: LLM 合成最终答案
 
-当 plan 所有步都是 ReWOO cluster 时, solver 已合成答案, Agent 跳过顶层 synthesize。
+**现状**：`Step` 仅 `prompt` 字段；`memory.workspace` 字段保留但未用；失败步由 `synthesize` 标注。
 
-### FSM 状态
+### 状态字段（FSM 模块已删，降级字符串常量）
 
 `IDLE -> ROUTING -> {RESPONDING | EXECUTING | PLANNING} -> ... -> IDLE`
 
-关键转移: `EXECUTING -> REFLECTING -> EXECUTING` (重试), `EXECUTING/REFLECTING -> REPLANNING -> EXECUTING` (重规划), `REPLANNING -> RESPONDING` (abort 兜底)。
+> 独立 FSM 模块已删除（Phase 0 `fdc9728`）。`fsm_state` 是 `Session` 的字符串字段，由 Agent 内联设置，不再强制合法转移。Reflexion 攒满 3 条 lesson 判穷尽 → 返回 `needs_replan`（不再走 REPLANNING 链路，因 Replanner 已删）。
+
+关键转移: `EXECUTING -> REFLECTING -> EXECUTING` (Reflexion 微观重试)。原 `-> REPLANNING -> EXECUTING` 链路因 Replanner 删除已废弃。
 
 ---
 
@@ -220,18 +221,17 @@ Three industry alternatives were considered and rejected (`docs/PLAN.md`, Phase 
 | Router 正确分流三种路径 | [x] | mock 测试覆盖 (test_router + test_agent) |
 | Executor function-calling loop 跑通 (含 max_steps 截断) | [x] | mock 测试 (test_executor) |
 | 工具异常触发 Reflexion 且 lesson 落 memory | [x] | mock 测试 (test_executor) |
-| Reflexion 重试耗尽触发 REPLANNING, MAX_REPLANS 截断生效 | [x] | mock 测试 (test_agent + test_integration) |
-| ReWOO: DAG 并行执行, 结果落 workspace, solver 合成 | [x] | mock 测试 (test_rewoo + test_agent) |
-| ReWOO solver 证据不足升级 REPLANNING | [x] | mock 测试 (test_rewoo) |
+| Reflexion 穷尽返回 needs_replan，交 synthesize 标 [STEP i FAILED] | [x] | mock 测试 (test_executor + test_integration)；Phase 0：Replanner/MAX_REPLANS 已删 |
+| ~~ReWOO: DAG 并行执行~~ / ~~solver 升级 REPLANNING~~ | [-] | 已删 (Phase 0)，mock 测试 (test_rewoo) 已随代码移除 |
 | 跨轮次继续执行（建 todo → 追问读回） | [x] | **真 API e2e 实跑通过** |
 | trace 完整记录每步, 前端可展示 | [x] | mock 测试 (test_trace + test_web) |
 | ≥3 工具 + 最大步数 + 异常处理 | [x] | calculator/search/todo；MAX_STEPS=10；工具错误回喂 LLM 不崩 |
 | 删除会话 | [x] | `DELETE /sessions/{id}` + 前端 × 按钮 |
 | README 含运行/设计/memory 三段 | [x] | 本文件 |
 | PROMPTS.md 含 prompt 与问题记录 | [x] | `PROMPTS.md` |
-| 单测全绿 (mock LLM) | [x] | 104 passed |
+| 单测全绿 (mock LLM) | [x] | 155 passed |
 
-**Status**: S1-S6 代码全部完成, mock-LLM 测试全绿 (104 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。
+**Status**: S1-S6 + Phase 2-4 (Memory System) 代码全部完成, mock-LLM 测试全绿 (155 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。Phase 0 已删 ReWOO/Replanner/FSM。
 
 ---
 
@@ -239,14 +239,14 @@ Three industry alternatives were considered and rejected (`docs/PLAN.md`, Phase 
 
 ```bash
 cd agent_framework
-.venv/Scripts/python -m pytest -q    # 104 passed
+.venv/Scripts/python -m pytest -q    # 155 passed
 .venv/Scripts/python -m ruff check .  # All checks passed
 .venv/Scripts/python -m mypy          # Success: no issues found in 22 source files (strict)
 ```
 
-- **108 个测试** 全绿 (含 S6 新增 7 个回归测试 `test_integration.py`: Contract C 四消息序列 + id 配对、跨路径 user 互斥、build_system_prompt 纯函数、reload 不变量、replan 覆写、MAX_REPLANS cap)。
-- 所有 LLM 调用均 mock (FakeLLM / ScriptedExecutor / ScriptedReplanner), 不依赖真实 API。
-- mypy strict 模式, 23 个源文件零错误。
+- **155 个测试** 全绿 (含 `test_integration.py` 回归: Contract C 四消息序列 + id 配对、跨路径 user 互斥、build_system_prompt 纯函数、reload 不变量)。
+- 所有 LLM 调用均 mock (FakeLLM / ScriptedExecutor), 不依赖真实 API。
+- mypy strict 模式, 22 个源文件零错误。
 
 ---
 
@@ -257,25 +257,27 @@ agent_framework/
   config.py            # 配置 (env 读取)
   main.py              # FastAPI app + Agent 装配
   llm/client.py        # DeepSeek (OpenAI 兼容) wrapper
+  ctx/compactor.py     # Phase 3: 三层 compaction (spill/microcompact/auto_compact)
   runtime/
-    agent.py           # 顶层编排 (Router -> {DIRECT|SIMPLE_TOOL|PLAN_REQUIRED})
+    agent.py           # 顶层编排 (Router -> {DIRECT|SIMPLE_TOOL|PLAN_REQUIRED}) + per-session lock
     router.py          # 族 I: 分类
     planner.py         # 族 D: 分解
-    executor.py        # 族 C: function-calling 循环
+    executor.py        # 族 C: function-calling 循环 (含 Contract C + 异步召回)
     reflexion.py       # 族 E: 微观自纠
-    replanner.py       # 族 D': 宏观自纠
-    rewoo.py           # 族 C': 微观并行 DAG
-    fsm.py             # 族 F: 状态机
+    recaller.py        # Phase 2: 异步 memory 召回 + 工具规避
+    agent_memory.py    # Phase 2: load_project_context 三层 AGENTS.md 聚合
+    # 已删 (Phase 0): rewoo.py / replanner.py / fsm.py
   session/
-    models.py          # Session / Memory / Message / Step / TodoItem
+    models.py          # Session / Memory / Message / Step / TodoItem / MemoryEntry
     store.py           # JSON 文件持久化 (原子替换)
   tools/
     base.py            # ToolRegistry + Tool 协议
     calculator.py      # 计算器
     search.py          # 搜索 (mock)
     todo.py            # 待办管理
+    memory.py          # Phase 2: WriteMemory (门控) + ReadMemoryBody (懒读正文)
   trace/logger.py      # JSONL 执行日志
-  tests/               # 14 个测试文件, 104 passed
+  tests/               # 18 个测试文件, 155 passed
   static/index.html    # 前端 UI
 docs/superpowers/      # spec + 实现计划
 PROMPTS.md             # AI 辅助开发记录
