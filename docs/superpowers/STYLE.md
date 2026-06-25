@@ -64,12 +64,12 @@ warn_return_any = false
 - 系统级（LLM API 网络/鉴权、FS 权限）→ raise，由上层（agent/FastAPI）捕获。
 - store 损坏 JSON → 备份 + 重建空 session，不 raise。
 
-### 注释（继承 CLAUDE.md）
+### 注释（继承 AGENTS.md）
 - 默认不写注释。
 - 只写 WHY：隐藏约束、不变量、特定 bug workaround、反直觉行为。
 - 不写 WHAT（代码自解释）、不引用当前 task / 调用方。
 
-### 编码（继承 CLAUDE.md §9）
+### 编码（继承 AGENTS.md §9）
 - 全文件 IO `encoding="utf-8"`。
 - subprocess 传 `env={"PYTHONIOENCODING": "utf-8"}`。
 - 路径用 `pathlib.Path`。

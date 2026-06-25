@@ -80,19 +80,19 @@ def test_missing_api_key_raises():
         LLMClient.from_env(api_key="")
 
 
-async def test_synthesize_includes_claude_context_when_present():
+async def test_synthesize_includes_project_context_when_present():
     fake = FakeOpenAI([_mk_choice(text="final")])
     c = LLMClient(client=fake)
 
-    out = await c.synthesize(["step"], {"0": "done"}, claude_context="User CLAUDE\nbe terse")
+    out = await c.synthesize(["step"], {"0": "done"}, project_context="User AGENTS\nbe terse")
 
     assert out == "final"
     messages = fake.calls[0]["messages"]
-    assert "User CLAUDE" in messages[0]["content"]
+    assert "User AGENTS" in messages[0]["content"]
     assert "be terse" in messages[0]["content"]
 
 
-async def test_synthesize_omits_claude_context_when_empty():
+async def test_synthesize_omits_project_context_when_empty():
     fake = FakeOpenAI([_mk_choice(text="final")])
     c = LLMClient(client=fake)
 
@@ -100,7 +100,7 @@ async def test_synthesize_omits_claude_context_when_empty():
 
     assert out == "final"
     content = fake.calls[0]["messages"][0]["content"]
-    assert "CLAUDE context:" not in content
+    assert "AGENTS context:" not in content
 
 
 # -- Phase 3: usage logging + timeout/max_retries --

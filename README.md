@@ -156,14 +156,14 @@ Two hard caps on the index (whichever hits first): `_MEMORY_INDEX_MAX_LINES = 20
 
 `_find_existing_entry` matches on `(type, name)` (case-insensitive). If a match exists, the entry is **updated in place** (name/description/keywords/content/saved_at overwritten, same `id`); otherwise a new entry with `_next_id` is appended. This gives same-name-same-type overwrite (latest wins) and cross-name coexistence.
 
-### CLAUDE.md loader (`runtime/claude_memory.py`)
+### AGENTS.md loader (`runtime/agent_memory.py`)
 
-`load_claude_context(workspace_root, user_home)` assembles permanent context from up to three layers, in this order:
-1. **Project CLAUDE.md** — traverses `workspace_root` up its parent chain, reading `CLAUDE.md` at each level (innermost wins by appearing last in the joined output).
-2. **Local CLAUDE.local.md** — `workspace_root/CLAUDE.local.md` (git-ignored personal overrides).
-3. **User CLAUDE.md** — `~/.claude/CLAUDE.md`.
+`load_project_context(workspace_root, user_home)` assembles permanent context from up to three layers, in this order:
+1. **Project AGENTS.md** — traverses `workspace_root` up its parent chain, reading `AGENTS.md` at each level (innermost wins by appearing last in the joined output).
+2. **Local AGENTS.local.md** — `workspace_root/AGENTS.local.md` (git-ignored personal overrides).
+3. **User AGENTS.md** — `~/.agents/AGENTS.md`.
 
-The merged text is loaded at the start of each `Agent.chat` and threaded through `build_memory_context_message` / `Planner.make_plan` / `Executor.run` as the `claude_context` argument. Because it is re-read every turn, it is **not** folded into compaction summaries — it is rebuilt fresh (see "Information channeling" below).
+The merged text is loaded at the start of each `Agent.chat` and threaded through `build_memory_context_message` / `Planner.make_plan` / `Executor.run` as the `project_context` argument. Because it is re-read every turn, it is **not** folded into compaction summaries — it is rebuilt fresh (see "Information channeling" below).
 
 ### Async memory recall (`runtime/recaller.py`, wired in `runtime/executor.py`)
 
@@ -192,7 +192,7 @@ Integration in `Executor.run`:
 Compaction routes information by kind rather than treating all text uniformly:
 - **Semantic info** (user intent, decisions, problem-solving) → goes into the **summary**.
 - **State info** (todos/plan/workspace) → goes into **attachments**, restored verbatim — never summarized, never dropped by microcompact.
-- **Permanent context** (CLAUDE.md) → **reloaded fresh** each turn from disk, not stored in the summary.
+- **Permanent context** (AGENTS.md) → **reloaded fresh** each turn from disk, not stored in the summary.
 - **Config** (system prompt, tool list) → rebuilt every request.
 
 ### Safety net

@@ -59,7 +59,7 @@ class Planner:
         self._llm = llm
 
     async def make_plan(
-        self, user_input: str, memory: Memory, claude_context: str = ""
+        self, user_input: str, memory: Memory, project_context: str = ""
     ) -> list[Step]:
         from session.models import Step
 
@@ -68,7 +68,7 @@ class Planner:
             {
                 "role": "user",
                 "content": _build_memory_context(
-                    memory, claude_context=claude_context
+                    memory, project_context=project_context
                 ),
             },
         ]
@@ -76,12 +76,12 @@ class Planner:
         return [Step(prompt=p) for p in _parse_steps(text or "")]
 
 
-def _build_memory_context(memory: Memory, claude_context: str = "") -> str:
+def _build_memory_context(memory: Memory, project_context: str = "") -> str:
     """Surface memory into the planner prompt (was a dead param)."""
     lines: list[str] = []
-    if claude_context.strip():
-        lines.append("CLAUDE context:")
-        lines.append(claude_context.strip())
+    if project_context.strip():
+        lines.append("AGENTS context:")
+        lines.append(project_context.strip())
     if memory.todos:
         lines.append("Active todos:")
         lines.extend(f"- {t.title} [{t.status}]" for t in memory.todos)

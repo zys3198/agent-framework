@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from runtime.claude_memory import load_claude_context
+from runtime.agent_memory import load_project_context
 from session.models import RECENT_LESSONS_LIMIT, Memory, MemoryEntry, Message
 from trace.logger import TraceLogger
 
@@ -45,10 +45,10 @@ def build_system_prompt(memory: Memory) -> str:
 
 
 def build_memory_context_message(
-    memory: Memory, claude_context: str = ""
+    memory: Memory, project_context: str = ""
 ) -> dict[str, str] | None:
     entries = _memory_index_lines(memory.entries)
-    parts = [part for part in [claude_context.strip(), "\n".join(entries)] if part]
+    parts = [part for part in [project_context.strip(), "\n".join(entries)] if part]
     if not parts:
         return None
     return {"role": "user", "content": "\n\n".join(parts)}
@@ -137,7 +137,7 @@ class Agent:
             compacted = await self._compactor.compact(session)
             if compacted:
                 self._store.save(session)  # persist compaction before proceeding
-        claude_context = load_claude_context(self._workspace_root, self._user_home)
+        project_context = load_project_context(self._workspace_root, self._user_home)
 
         trace = TraceLogger(self._trace_dir / f"{Path(session_id).name}.jsonl")
         try:
@@ -149,7 +149,7 @@ class Agent:
                 sys_msg = build_system_prompt(session.memory)
                 messages = [{"role": "system", "content": sys_msg}]
                 memory_msg = build_memory_context_message(
-                    session.memory, claude_context=claude_context
+                    session.memory, project_context=project_context
                 )
                 if memory_msg is not None:
                     messages.append(memory_msg)
@@ -163,7 +163,7 @@ class Agent:
                 # Executor owns all session.messages persistence on this path (Contract C).
                 session.fsm_state = STATE_EXECUTING
                 outcome = await self._executor.run(
-                    session, user_input, trace, claude_context=claude_context
+                    session, user_input, trace, project_context=project_context
                 )
                 session.fsm_state = STATE_WAITING
                 if outcome.needs_replan:
@@ -174,7 +174,7 @@ class Agent:
             else:  # PLAN_REQUIRED
                 session.fsm_state = STATE_PLANNING
                 plan = await self._planner.make_plan(
-                    user_input, session.memory, claude_context=claude_context
+                    user_input, session.memory, project_context=project_context
                 )
                 session.memory.plan = plan
                 session.fsm_state = STATE_EXECUTING
@@ -186,7 +186,7 @@ class Agent:
                 results: dict[int, object] = {}
                 for i in range(len(plan)):
                     outcome = await self._executor.run(
-                        session, plan[i].prompt, trace, claude_context=claude_context
+                        session, plan[i].prompt, trace, project_context=project_context
                     )
                     results[i] = outcome
                     if outcome.needs_replan:
@@ -195,7 +195,7 @@ class Agent:
                 answer = await self._llm.synthesize(
                     [s.prompt for s in plan],
                     {str(idx): _synthesize_entry(idx, o) for idx, o in results.items()},
-                    claude_context,
+                    project_context,
                 )
                 # Contract C: agent appends ONLY the synthesized final answer here;
                 # per-step messages were persisted by the executor.

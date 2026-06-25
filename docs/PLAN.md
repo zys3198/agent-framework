@@ -79,8 +79,8 @@
 - content 不常驻,模型匹配到才 read_memory_body 读
 - todo/plan 等状态信息走附件通道原样恢复 = 外化到代码层能召回(来源 1-4 措辞明确)
 
-### CLAUDE.md 四层级(按 session/project 分层)
-- Project 级(./CLAUDE.md) + Local 级(./CLAUDE.local.md) + User 级(~/.claude/CLAUDE.md)三层(demo 不做 Managed 组织级)
+### AGENTS.md 四层级(按 session/project 分层)
+- Project 级(./AGENTS.md) + Local 级(./AGENTS.local.md) + User 级(~/.agents/AGENTS.md)三层(demo 不做 Managed 组织级)
 - 启动加载,向上遍历目录树拼接
 
 ### lessons 加 maxlen 滚动窗口
@@ -138,7 +138,7 @@
 ### 信息分通道(总纲)
 - 语义信息(用户意图/方案/决策)到摘要
 - 状态信息(todos/plan/workspace)到附件,原样恢复(= 面试官说的"外化召回")
-- 永久上下文(CLAUDE.md)缓存清理重载(不进摘要)
+- 永久上下文(AGENTS.md)缓存清理重载(不进摘要)
 - 配置(system prompt/工具列表)每次重建
 ### 压缩后消息链组装(四段式裁剪版)
 - boundaryMarker(边界标记):记录"自动触发 + 压前 token 数 + 末条消息 ID",配合摘要开头"本会话是从之前一次上下文耗尽而中断的对话延续过来的",让模型知道是接力不是重头

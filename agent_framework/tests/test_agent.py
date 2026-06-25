@@ -28,7 +28,7 @@ class FakeLLM:
         self.chat_calls.append({"messages": messages, "tools": tools})
         return self._chats.pop(0)
 
-    async def synthesize(self, plan, results, claude_context: str = ""):
+    async def synthesize(self, plan, results, project_context: str = ""):
         return f"synth:{len(plan)}:{len(results)}"
 
 
@@ -54,7 +54,7 @@ class ScriptedExecutor(Executor):
         self._outcomes = list(outcomes)
         self.prompts: list[str] = []
 
-    async def run(self, session, prompt, trace, claude_context: str = ""):  # type: ignore[override]
+    async def run(self, session, prompt, trace, project_context: str = ""):  # type: ignore[override]
         self.prompts.append(prompt)
         return self._outcomes.pop(0)
 

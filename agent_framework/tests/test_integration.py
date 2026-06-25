@@ -45,9 +45,9 @@ class FakeLLM:
         self.chat_calls.append({"messages": messages, "tools": tools})
         return self._chats.pop(0)
 
-    async def synthesize(self, plan, results, claude_context: str = ""):
+    async def synthesize(self, plan, results, project_context: str = ""):
         self.synthesize_calls.append(
-            {"plan": plan, "results": results, "claude_context": claude_context}
+            {"plan": plan, "results": results, "project_context": project_context}
         )
         return f"synth:{len(plan)}:{len(results)}"
 
@@ -263,11 +263,11 @@ def test_build_memory_context_message_includes_index_only():
     assert "do not inject me" not in msg["content"]
 
 
-def test_build_memory_context_message_returns_claude_only_without_memory_entries():
-    msg = build_memory_context_message(Memory(), claude_context="User CLAUDE\nfollow rules")
+def test_build_memory_context_message_returns_project_only_without_memory_entries():
+    msg = build_memory_context_message(Memory(), project_context="User AGENTS\nfollow rules")
     assert msg is not None
     assert msg["role"] == "user"
-    assert "User CLAUDE" in msg["content"]
+    assert "User AGENTS" in msg["content"]
     assert "follow rules" in msg["content"]
     assert "Memory index:" not in msg["content"]
 
@@ -304,7 +304,7 @@ async def test_direct_path_injects_memory_context_after_system(tmp_path):
     mem_llm = FakeLLM(responds=["direct answer"])
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "CLAUDE.local.md").write_text("local claude", encoding="utf-8")
+    (workspace / "AGENTS.local.md").write_text("local rules", encoding="utf-8")
     agent = _build_agent(tmp_path, mem_llm, Route.DIRECT)
     agent._workspace_root = workspace
 
@@ -313,8 +313,8 @@ async def test_direct_path_injects_memory_context_after_system(tmp_path):
     messages = mem_llm.respond_calls[0]["messages"]
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"
-    assert "Local CLAUDE" in messages[1]["content"]
-    assert "local claude" in messages[1]["content"]
+    assert "Local AGENTS" in messages[1]["content"]
+    assert "local rules" in messages[1]["content"]
     assert len(messages) == 2
     assert mem_llm.respond_calls[0]["user_input"] == "hello"
 
@@ -380,10 +380,10 @@ async def test_plan_required_reload_no_orphan_tool(tmp_path):
     assert s.messages[-1].content == "synth:2:2"
 
 
-async def test_plan_required_passes_claude_context_to_planner_and_synthesis(tmp_path):
+async def test_plan_required_passes_project_context_to_planner_and_synthesis(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "CLAUDE.local.md").write_text("planner and synth rules", encoding="utf-8")
+    (workspace / "AGENTS.local.md").write_text("planner and synth rules", encoding="utf-8")
     llm = FakeLLM(
         responds=['{"steps": ["say done"]}'],
         chats=[LLMResponse(text="step ok", tool_calls=[])],
@@ -396,11 +396,11 @@ async def test_plan_required_passes_claude_context_to_planner_and_synthesis(tmp_
     )
     agent = _build_agent(tmp_path, llm, Route.PLAN_REQUIRED, executor=ex, workspace_root=workspace)
 
-    out = await agent.chat("s-claude-plan", "go")
+    out = await agent.chat("s-project-plan", "go")
 
     assert out == "synth:1:1"
     planner_messages = llm.respond_calls[0]["messages"]
     planner_body = "\n".join(m["content"] for m in planner_messages)
     assert "planner and synth rules" in planner_body
-    assert llm.synthesize_calls[0]["claude_context"]
-    assert "planner and synth rules" in llm.synthesize_calls[0]["claude_context"]
+    assert llm.synthesize_calls[0]["project_context"]
+    assert "planner and synth rules" in llm.synthesize_calls[0]["project_context"]

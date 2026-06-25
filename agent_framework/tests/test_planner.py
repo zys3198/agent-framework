@@ -90,7 +90,7 @@ async def test_make_plan_surfaces_memory_context():
     assert "always validate input" in body
 
 
-async def test_make_plan_limits_lessons_and_includes_claude_context():
+async def test_make_plan_limits_lessons_and_includes_project_context():
     seen: dict[str, object] = {}
 
     class CapturingLLM:
@@ -100,10 +100,10 @@ async def test_make_plan_limits_lessons_and_includes_claude_context():
 
     mem = Memory(lessons=[f"lesson-{i}" for i in range(21)])
     planner = Planner(CapturingLLM())  # type: ignore[arg-type]
-    await planner.make_plan("go", mem, claude_context="Project CLAUDE\nfollow rules")
+    await planner.make_plan("go", mem, project_context="Project AGENTS\nfollow rules")
 
     body = "\n".join(m["content"] for m in seen["messages"])
-    assert "Project CLAUDE" in body
+    assert "Project AGENTS" in body
     assert "follow rules" in body
     assert "lesson-0" not in body
     assert "lesson-1" in body

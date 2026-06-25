@@ -91,12 +91,12 @@ class LLMClient:
         return LLMResponse(text=text, tool_calls=tcs)
 
     async def synthesize(
-        self, plan: list[str], results: dict[str, Any], claude_context: str = ""
+        self, plan: list[str], results: dict[str, Any], project_context: str = ""
     ) -> str:
         """Planner path: synthesize final answer from step results."""
         lines: list[str] = []
-        if claude_context.strip():
-            lines.extend(["CLAUDE context:", claude_context.strip()])
+        if project_context.strip():
+            lines.extend(["AGENTS context:", project_context.strip()])
         lines.extend(
             [
                 f"plan: {plan}",

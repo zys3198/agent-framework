@@ -46,7 +46,7 @@ class Executor:
         self._recaller = recaller
 
     async def run(
-        self, session: Session, prompt: str, trace: TraceLogger, claude_context: str = ""
+        self, session: Session, prompt: str, trace: TraceLogger, project_context: str = ""
     ) -> Outcome:
         from datetime import UTC, datetime
 
@@ -67,7 +67,7 @@ class Executor:
             {"role": "system", "content": build_system_prompt(session.memory)}
         ]
         memory_msg = build_memory_context_message(
-            session.memory, claude_context=claude_context
+            session.memory, project_context=project_context
         )
         if memory_msg is not None:
             messages.append(memory_msg)
