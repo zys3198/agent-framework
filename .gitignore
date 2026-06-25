@@ -38,3 +38,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .playwright-mcp/
+
+# Local-only notes (not for the repo)
+docs/面试记录.txt
+docs/面试记录-结构化.md
