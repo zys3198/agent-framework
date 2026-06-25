@@ -48,34 +48,6 @@ class TraceLogger:
     def log_truncated(self) -> None:
         self._emit({"type": "truncated"})
 
-    # REPLANNING (S3)
-    def log_replan(self, count: int, reason: str, revised_steps: int) -> None:
-        self._emit(
-            {
-                "type": "replan",
-                "count": count,
-                "reason": reason,
-                "revised_steps": revised_steps,
-            }
-        )
-
-    # ReWOO (S4)
-    def log_rewoo_dag(
-        self, step: int, nodes: list[str], edges: list[list[str]]
-    ) -> None:
-        self._emit({"type": "rewoo_dag", "step": step, "nodes": nodes, "edges": edges})
-
-    def log_rewoo_solve(self, step: int, vars: list[str], sufficient: bool) -> None:
-        # vars shadows builtin: test calls with kwarg vars=, ruff select has no A002.
-        self._emit(
-            {
-                "type": "rewoo_solve",
-                "step": step,
-                "vars": vars,
-                "evidence_sufficient": sufficient,
-            }
-        )
-
     def close(self) -> None:
         if not self._fh.closed:
             self._fh.close()

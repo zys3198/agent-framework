@@ -31,10 +31,23 @@ class Router:
         self._llm = llm
 
     async def classify(self, user_input: str, memory: Memory) -> Route:
-        messages = [{"role": "system", "content": _ROUTER_PROMPT}]
+        messages = [
+            {"role": "system", "content": _ROUTER_PROMPT},
+            {"role": "user", "content": _build_router_context(memory)},
+        ]
         text = await asyncio.to_thread(self._llm.respond, messages, user_input)
         upper = (text or "").strip().upper()
         for r in Route:
             if r.value in upper:
                 return r
         return Route.DIRECT
+
+
+def _build_router_context(memory: Memory) -> str:
+    """Surface memory into the router prompt (was a dead param)."""
+    lines: list[str] = []
+    if memory.todos:
+        lines.append("Open todos: " + ", ".join(t.title for t in memory.todos))
+    if memory.lessons:
+        lines.append("Recent lessons: " + "; ".join(memory.lessons[-3:]))
+    return "\n".join(lines) if lines else "No prior context."

@@ -33,7 +33,14 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         return [
-            {"name": t.name, "description": t.description, "parameters": t.parameters}
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                },
+            }
             for t in self._tools.values()
         ]
 

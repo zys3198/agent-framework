@@ -23,7 +23,7 @@ class Outcome:
 
 
 class Executor:
-    """Function-calling loop: LLM <-> tool dispatch <-> result回填.
+    """Function-calling loop: LLM <-> tool dispatch <-> result write-back.
 
     On tool error, triggers Reflexion to learn a lesson, appends it to
     memory, and continues. Returns Outcome(text, needs_replan).
@@ -42,6 +42,7 @@ class Executor:
         self.max_steps = max_steps
 
     async def run(self, session: Session, prompt: str, trace: TraceLogger) -> Outcome:
+        from runtime.agent import build_system_prompt
         from session.models import Message
         from tools.base import ToolCall
 
@@ -51,8 +52,13 @@ class Executor:
         # (user -> assistant[tool_calls] -> tool -> ... -> assistant) is atomic
         # and survives reload. OpenAI/DeepSeek reject a tool message not
         # preceded by the assistant(tool_calls) that issued it.
+        # System prompt is injected here too (was missing on the tool path:
+        # memory/todos/lessons were invisible to the model).
         session.messages.append(Message(role="user", content=prompt))
-        messages: list[dict[str, Any]] = [m.to_dict() for m in session.messages]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": build_system_prompt(session.memory)},
+            *[m.to_dict() for m in session.messages],
+        ]
         tools = self._registry.schemas()
 
         for step in range(self.max_steps):
@@ -113,9 +119,51 @@ class Executor:
                 session.messages.append(
                     Message(role="tool", content=result, tool_call_id=tc.id)
                 )
-                if exhausted:  # Reflexion spent -> hand off to Replanner (族 D')
+                if exhausted:
+                    # Replanner is gone (Phase 0). Flush the remaining tool
+                    # messages in this batch so no orphan tool message survives
+                    # a reload, then surface needs_replan so the Agent can mark
+                    # the failed step in synthesis instead of silently
+                    # swallowing it.
+                    self._flush_pending_tools(
+                        resp.tool_calls, tc.id, step, trace, session, messages
+                    )
+                    log.warning(
+                        "step %d: reflexion exhausted on tool %s; needs_replan",
+                        step,
+                        tc.name,
+                    )
                     return Outcome(text=result, needs_replan=True)
 
         trace.log_truncated()
         session.messages.append(Message(role="assistant", content="(truncated)"))
         return Outcome(text="(truncated)", needs_replan=True)
+
+    def _flush_pending_tools(
+        self,
+        all_calls: list[Any],
+        after_id: str,
+        step: int,
+        trace: TraceLogger,
+        session: Session,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Append tool-result messages for calls AFTER the one that triggered
+        the early return, so the persisted sequence stays atomic (no orphan
+        tool). Calls before/including after_id are already flushed."""
+        from session.models import Message
+
+        seen = False
+        for tc in all_calls:
+            if seen:
+                result = f"ERROR: tool {tc.name} skipped (prior step exhausted)"
+                trace.log_tool_call(step, tc.name, tc.args)
+                trace.log_tool_result(step, result)
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": result}
+                )
+                session.messages.append(
+                    Message(role="tool", content=result, tool_call_id=tc.id)
+                )
+            if tc.id == after_id:
+                seen = True

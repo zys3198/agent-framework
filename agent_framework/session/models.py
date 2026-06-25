@@ -34,7 +34,6 @@ class TodoItem:
 @dataclass
 class Step:
     prompt: str
-    is_rewoo_cluster: bool = False  # S4 ReWOO marker; unused in S3
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -45,10 +44,8 @@ class Step:
         # wrap a bare string as Step(prompt=str). Also tolerate extra keys.
         if isinstance(d, str):
             return cls(prompt=d)
-        return cls(
-            prompt=d["prompt"],
-            is_rewoo_cluster=d.get("is_rewoo_cluster", False),
-        )
+        # is_rewoo_cluster tolerated as a tolerated extra key on legacy files.
+        return cls(prompt=d["prompt"])
 
 
 @dataclass

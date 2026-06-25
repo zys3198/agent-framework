@@ -52,10 +52,11 @@ class LLMClient:
     def chat_with_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> LLMResponse:
-        """Function-calling path. tools empty -> text-only response."""
+        """Function-calling path. `tools` already in standard OpenAI shape
+        ({"type":"function","function":{...}}). Empty -> text-only response."""
         kw: dict[str, Any] = {"model": self.model, "messages": messages}
         if tools:
-            kw["tools"] = [{"type": "function", "function": t} for t in tools]
+            kw["tools"] = tools
         resp = self._client.chat.completions.create(**kw)
         msg = resp.choices[0].message
         text = msg.content or ""

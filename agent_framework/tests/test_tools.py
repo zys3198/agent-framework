@@ -22,7 +22,7 @@ class FakeTool:
 def test_register_and_dispatch():
     reg = ToolRegistry()
     reg.register(FakeTool())
-    assert any(s["name"] == "fake" for s in reg.schemas())
+    assert any(s["function"]["name"] == "fake" for s in reg.schemas())
 
     res = asyncio.run(
         reg.dispatch(ToolCall(name="fake", args={"x": 1}), Session(id="s"))
@@ -43,9 +43,12 @@ def test_schemas_export():
     sch = reg.schemas()
     assert sch == [
         {
-            "name": "fake",
-            "description": "fake tool",
-            "parameters": {"type": "object", "properties": {}},
+            "type": "function",
+            "function": {
+                "name": "fake",
+                "description": "fake tool",
+                "parameters": {"type": "object", "properties": {}},
+            },
         }
     ]
 

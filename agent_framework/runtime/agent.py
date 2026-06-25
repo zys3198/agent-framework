@@ -18,8 +18,6 @@ if TYPE_CHECKING:
     from llm.client import LLMClient
     from runtime.executor import Executor
     from runtime.planner import Planner
-    from runtime.replanner import Replanner
-    from runtime.rewoo import ReWOO
     from runtime.router import Router
     from session.store import Store
 
@@ -29,7 +27,7 @@ def _now() -> str:
 
 
 def build_system_prompt(memory: Memory) -> str:
-    """Inject memory (todos / plan / lessons) into the system prompt (spec §5.3)."""
+    """Inject memory (todos / plan / lessons) into the system prompt (spec 5.3)."""
     lines: list[str] = ["You are a helpful agent."]
     if memory.todos:
         lines.append("Todos:")
@@ -49,7 +47,11 @@ class Agent:
     session.messages persistence (user / assistant(tool_calls) / tool / final
     assistant). On DIRECT this Agent appends user + assistant itself. In the
     PLAN_REQUIRED branch the Agent appends ONLY the final synthesized assistant
-    answer — per-step messages are persisted by the executor.
+    answer -- per-step messages are persisted by the executor.
+
+    Phase 0: ReWOO + Replanner deleted (dead paths). Planner still builds the
+    initial plan; failures are NOT re-planned -- the failed step's outcome is
+    surfaced to synthesis so the model knows a step failed.
     """
 
     def __init__(
@@ -60,9 +62,6 @@ class Agent:
         llm: LLMClient,
         trace_dir: Path,
         planner: Planner,
-        replanner: Replanner,
-        rewoo: ReWOO,
-        max_replans: int,
     ) -> None:
         self._store = store
         self._router = router
@@ -70,9 +69,6 @@ class Agent:
         self._llm = llm
         self._trace_dir = trace_dir
         self._planner = planner
-        self._replanner = replanner
-        self._rewoo = rewoo
-        self._max_replans = max_replans
 
     async def chat(self, session_id: str, user_input: str) -> str:
         from runtime.router import Route
@@ -103,6 +99,9 @@ class Agent:
                 session.fsm_state = STATE_EXECUTING
                 outcome = await self._executor.run(session, user_input, trace)
                 session.fsm_state = STATE_WAITING
+                if outcome.needs_replan:
+                    # No replanner now; log so the failure is not silently swallowed.
+                    trace.log_truncated()
                 answer = outcome.text
 
             else:  # PLAN_REQUIRED
@@ -111,43 +110,22 @@ class Agent:
                 session.memory.plan = plan
                 session.fsm_state = STATE_EXECUTING
 
+                # Planner makes the initial decomposition. Failed steps are NOT
+                # re-planned; their outcome (incl. ERROR) is handed to synthesis
+                # so the model knows a step failed (replacement for the deleted
+                # Replanner safety net).
                 results: dict[int, object] = {}
-                replans = 0
-                i = 0
-                while i < len(plan):
-                    if plan[i].is_rewoo_cluster:
-                        outcome = await self._rewoo.run(
-                            session, plan[i].prompt, i, trace
-                        )
-                    else:
-                        outcome = await self._executor.run(
-                            session, plan[i].prompt, trace
-                        )
+                for i in range(len(plan)):
+                    outcome = await self._executor.run(session, plan[i].prompt, trace)
                     results[i] = outcome
-                    if outcome.needs_replan and replans < self._max_replans:
-                        session.fsm_state = STATE_PLANNING
-                        revised = await self._replanner.revise(
-                            plan[i:], results, session.memory
-                        )
-                        plan = plan[:i] + revised
-                        replans += 1
-                        session.memory.plan = plan
-                        trace.log_replan(replans, "needs_replan", len(revised))
-                        session.fsm_state = STATE_EXECUTING
-                        continue  # re-run index i (= first revised step)
-                    i += 1
+                    if outcome.needs_replan:
+                        trace.log_truncated()
 
-                # When every step was a ReWOO cluster, its solver already
-                # synthesized the final answer; skip the top-level synth.
-                if plan and all(s.is_rewoo_cluster for s in plan):
-                    last = results[len(plan) - 1]
-                    answer = str(getattr(last, "text", last))
-                else:
-                    answer = await asyncio.to_thread(
-                        self._llm.synthesize,
-                        [s.prompt for s in plan],
-                        {str(idx): getattr(o, "text", o) for idx, o in results.items()},
-                    )
+                answer = await asyncio.to_thread(
+                    self._llm.synthesize,
+                    [s.prompt for s in plan],
+                    {str(idx): _synthesize_entry(idx, o) for idx, o in results.items()},
+                )
                 # Contract C: agent appends ONLY the synthesized final answer here;
                 # per-step messages were persisted by the executor.
                 session.fsm_state = STATE_WAITING
@@ -159,3 +137,12 @@ class Agent:
             return answer
         finally:
             trace.close()
+
+
+def _synthesize_entry(idx: int, outcome: object) -> str:
+    """Mark failed steps so synthesis can distinguish them from successes."""
+    text = getattr(outcome, "text", str(outcome))
+    needs_replan = getattr(outcome, "needs_replan", False)
+    if needs_replan:
+        return f"[STEP {idx} FAILED] {text}"
+    return f"[STEP {idx}] {text}"

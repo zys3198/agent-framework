@@ -60,13 +60,21 @@ class Planner:
     async def make_plan(self, user_input: str, memory: Memory) -> list[Step]:
         from session.models import Step
 
-        text = await asyncio.to_thread(
-            self._llm.respond,
-            [{"role": "system", "content": _PLANNER_PROMPT}],
-            user_input,
-        )
-        raw = text or ""
-        data = _extract_json(raw)
-        if isinstance(data, dict) and isinstance(data.get("rewoo_cluster"), str):
-            return [Step(prompt=data["rewoo_cluster"], is_rewoo_cluster=True)]
-        return [Step(prompt=p) for p in _parse_steps(raw)]
+        messages = [
+            {"role": "system", "content": _PLANNER_PROMPT},
+            {"role": "user", "content": _build_memory_context(memory)},
+        ]
+        text = await asyncio.to_thread(self._llm.respond, messages, user_input)
+        return [Step(prompt=p) for p in _parse_steps(text or "")]
+
+
+def _build_memory_context(memory: Memory) -> str:
+    """Surface memory into the planner prompt (was a dead param)."""
+    lines: list[str] = []
+    if memory.todos:
+        lines.append("Active todos:")
+        lines.extend(f"- {t.title} [{t.status}]" for t in memory.todos)
+    if memory.lessons:
+        lines.append("Lessons learned:")
+        lines.extend(f"- {lesson}" for lesson in memory.lessons)
+    return "\n".join(lines) if lines else "No prior context."

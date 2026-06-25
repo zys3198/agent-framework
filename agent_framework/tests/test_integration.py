@@ -1,23 +1,22 @@
-"""S6 regression tests: cross-path persistence, Contract C end-to-end.
+"""Regression tests: cross-path persistence, Contract C end-to-end.
 
 These cover behaviors the unit tests (test_agent / test_executor) missed:
 the FULL atomic 4-message sequence + id pairing, cross-path user-landing
-mutual exclusion, build_system_prompt purity, the reload invariant that
-prevents orphan tool messages, replan-overwrite, and the MAX_REPLANS cap.
+mutual exclusion, build_system_prompt purity, and the reload invariant that
+prevents orphan tool messages.
 
-All LLM calls are mocked (FakeLLM / ScriptedExecutor / ScriptedReplanner).
+All LLM calls are mocked (FakeLLM / ScriptedExecutor).
 """
+
 from __future__ import annotations
 
 from typing import Any, ClassVar
 
 from llm.client import LLMResponse, ToolCallResult
 from runtime.agent import Agent, build_system_prompt
-from runtime.executor import Executor, Outcome
+from runtime.executor import Executor
 from runtime.planner import Planner
 from runtime.reflexion import Reflexion
-from runtime.replanner import Replanner
-from runtime.rewoo import ReWOO
 from runtime.router import Route, Router
 from session.models import Memory, Step, TodoItem
 from session.store import Store
@@ -54,35 +53,6 @@ class FixedRouter(Router):
         return self._route
 
 
-class ScriptedExecutor(Executor):
-    """Returns queued Outcomes in order; records prompts seen."""
-
-    def __init__(self, outcomes) -> None:
-        super().__init__(
-            llm=None,  # type: ignore[arg-type]
-            registry=ToolRegistry(),
-            reflexion=Reflexion(llm=None),  # type: ignore[arg-type]
-            max_steps=1,
-        )
-        self._outcomes = list(outcomes)
-        self.prompts: list[str] = []
-
-    async def run(self, session, prompt, trace):  # type: ignore[override]
-        self.prompts.append(prompt)
-        return self._outcomes.pop(0)
-
-
-class ScriptedReplanner(Replanner):
-    def __init__(self, revised_prompts) -> None:
-        super().__init__(llm=None)  # type: ignore[arg-type]
-        self._revised = list(revised_prompts)
-        self.calls = 0
-
-    async def revise(self, remaining, results, memory):  # type: ignore[override]
-        self.calls += 1
-        return [Step(prompt=p) for p in self._revised]
-
-
 class EchoTool:
     name = "echo"
     description = "echo back the text"
@@ -100,15 +70,7 @@ def _tc(name: str, args: dict, tid: str = "c1") -> ToolCallResult:
     return ToolCallResult(id=tid, name=name, args=args)
 
 
-def _build_agent(
-    tmp_path,
-    llm,
-    route: Route,
-    executor=None,
-    replanner=None,
-    rewoo=None,
-    max_replans: int = 2,
-) -> Agent:
+def _build_agent(tmp_path, llm, route: Route, executor=None) -> Agent:
     return Agent(
         store=Store(tmp_path),
         router=FixedRouter(route),
@@ -122,9 +84,6 @@ def _build_agent(
         llm=llm,
         trace_dir=tmp_path,
         planner=Planner(llm=llm),
-        replanner=replanner or Replanner(llm=llm),
-        rewoo=rewoo or ReWOO(llm=llm, registry=ToolRegistry()),
-        max_replans=max_replans,
     )
 
 
@@ -143,7 +102,9 @@ async def test_contract_c_four_message_sequence(tmp_path):
     reg.register(EchoTool())
     llm = FakeLLM(
         chats=[
-            LLMResponse(text="", tool_calls=[_tc("echo", {"text": "hi"}, tid="tc-001")]),
+            LLMResponse(
+                text="", tool_calls=[_tc("echo", {"text": "hi"}, tid="tc-001")]
+            ),
             LLMResponse(text="all done", tool_calls=[]),
         ]
     )
@@ -158,6 +119,7 @@ async def test_contract_c_four_message_sequence(tmp_path):
     assert out == "all done"
 
     s = agent._store.load("s1")
+    # system message is injected to the LLM but NOT persisted to session.messages
     roles = [m.role for m in s.messages]
     assert roles == ["user", "assistant", "tool", "assistant"]
 
@@ -196,16 +158,13 @@ async def test_direct_vs_simple_tool_user_messages_mutually_exclusive(tmp_path):
     await agent_direct.chat("s2", "hello direct")
 
     # second turn: SIMPLE_TOOL (same session id, reloaded from store).
-    # Rebuild agent with SIMPLE_TOOL route + executor with empty registry.
     ex = Executor(
         llm=llm,
         registry=ToolRegistry(),
         reflexion=Reflexion(llm=None),  # type: ignore[arg-type]
         max_steps=5,
     )
-    agent_tool = _build_agent(
-        tmp_path, llm, Route.SIMPLE_TOOL, executor=ex, max_replans=2
-    )
+    agent_tool = _build_agent(tmp_path, llm, Route.SIMPLE_TOOL, executor=ex)
     await agent_tool.chat("s2", "hello tool")
 
     s = agent_tool._store.load("s2")
@@ -263,7 +222,9 @@ async def test_plan_required_reload_no_orphan_tool(tmp_path):
         responds=['{"steps": ["echo A", "say done"]}'],
         chats=[
             # step 1: one tool_call then final text
-            LLMResponse(text="", tool_calls=[_tc("echo", {"text": "A"}, tid="tc-step1")]),
+            LLMResponse(
+                text="", tool_calls=[_tc("echo", {"text": "A"}, tid="tc-step1")]
+            ),
             LLMResponse(text="step1 ok", tool_calls=[]),
             # step 2: text only
             LLMResponse(text="step2 ok", tool_calls=[]),
@@ -303,49 +264,3 @@ async def test_plan_required_reload_no_orphan_tool(tmp_path):
     # final assistant is the synthesized answer
     assert s.messages[-1].role == "assistant"
     assert s.messages[-1].content == "synth:2:2"
-
-
-# ---------------------------------------------------------------------------
-# Test 5: replan overwrites session.memory.plan
-# ---------------------------------------------------------------------------
-
-
-async def test_replan_overwrites_memory_plan(tmp_path):
-    """A PLAN_REQUIRED turn that triggers one replan: after the turn,
-    session.memory.plan equals the replanner's revised steps (not original).
-    """
-    llm = FakeLLM(responds=['{"steps": ["original step"]}'])  # planner only
-    ex = ScriptedExecutor(
-        [Outcome(text="fail", needs_replan=True), Outcome(text="ok", needs_replan=False)]
-    )
-    rp = ScriptedReplanner(["revised step"])
-    agent = _build_agent(
-        tmp_path, llm, Route.PLAN_REQUIRED, executor=ex, replanner=rp, max_replans=2
-    )
-    await agent.chat("s5", "go")
-
-    s = agent._store.load("s5")
-    assert rp.calls == 1
-    assert [st.prompt for st in s.memory.plan] == ["revised step"]
-    assert "original step" not in [st.prompt for st in s.memory.plan]
-
-
-# ---------------------------------------------------------------------------
-# Test 6: MAX_REPLANS cap continues old plan (no hang)
-# ---------------------------------------------------------------------------
-
-
-async def test_max_replans_cap_continues_old_plan(tmp_path):
-    """With max_replans=1 and an executor that always returns needs_replan=True,
-    the loop terminates (does not hang) and replanner.calls == 1 (capped).
-    """
-    llm = FakeLLM(responds=['{"steps": ["step A"]}'])
-    ex = ScriptedExecutor([Outcome(text="fail", needs_replan=True)] * 10)
-    rp = ScriptedReplanner(["retry step"])
-    agent = _build_agent(
-        tmp_path, llm, Route.PLAN_REQUIRED, executor=ex, replanner=rp, max_replans=1
-    )
-    # If the cap logic is broken this hangs forever; pytest will time out.
-    out = await agent.chat("s6", "go")
-    assert rp.calls == 1  # capped at max_replans=1, not 10
-    assert out.startswith("synth:")

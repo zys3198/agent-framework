@@ -19,8 +19,6 @@ from runtime.agent import Agent
 from runtime.executor import Executor
 from runtime.planner import Planner
 from runtime.reflexion import Reflexion
-from runtime.replanner import Replanner
-from runtime.rewoo import ReWOO
 from runtime.router import Router
 from session.store import Store
 from tools.base import ToolRegistry
@@ -65,9 +63,6 @@ def build_agent() -> Agent:
         llm=llm,
         trace_dir=config.TRACE_DIR,
         planner=Planner(llm=llm),
-        replanner=Replanner(llm=llm),
-        rewoo=ReWOO(llm=llm, registry=registry),
-        max_replans=config.MAX_REPLANS,
     )
 
 

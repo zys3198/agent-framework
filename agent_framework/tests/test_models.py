@@ -36,17 +36,16 @@ def test_to_dict_roundtrip():
 
 
 def test_step_roundtrip():
-    s = Step(prompt="do A", is_rewoo_cluster=False)
+    s = Step(prompt="do A")
     d = s.to_dict()
-    assert d == {"prompt": "do A", "is_rewoo_cluster": False}
+    assert d == {"prompt": "do A"}
     s2 = Step.from_dict(d)
     assert s2.prompt == "do A"
-    assert s2.is_rewoo_cluster is False
 
 
 def test_step_defaults():
     s = Step(prompt="x")
-    assert s.is_rewoo_cluster is False
+    assert s.prompt == "x"
 
 
 def test_step_from_dict_tolerates_str():
@@ -65,7 +64,7 @@ def test_memory_plan_step_roundtrip():
     m.plan.append(Step(prompt="step one"))
     m.plan.append(Step(prompt="step two"))
     d = m.to_dict()
-    assert d["plan"][0] == {"prompt": "step one", "is_rewoo_cluster": False}
+    assert d["plan"][0] == {"prompt": "step one"}
     m2 = Memory.from_dict(d)
     assert len(m2.plan) == 2
     assert m2.plan[0].prompt == "step one"
