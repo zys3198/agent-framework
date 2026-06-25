@@ -66,6 +66,7 @@ def build_agent() -> Agent:
         llm=llm,
         trace_dir=config.TRACE_DIR,
         planner=Planner(llm=llm),
+        workspace_root=Path.cwd(),
     )
 
 

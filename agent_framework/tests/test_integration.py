@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from llm.client import LLMResponse, ToolCallResult
-from runtime.agent import Agent, build_system_prompt
+from runtime.agent import Agent, build_memory_context_message, build_system_prompt
 from runtime.executor import Executor
 from runtime.planner import Planner
 from runtime.reflexion import Reflexion
@@ -33,14 +33,22 @@ class FakeLLM:
     def __init__(self, responds=None, chats=None):
         self._responds = list(responds or [])
         self._chats = list(chats or [])
+        self.respond_calls: list[dict[str, Any]] = []
+        self.chat_calls: list[dict[str, Any]] = []
+        self.synthesize_calls: list[dict[str, Any]] = []
 
     def respond(self, messages, user_input):
+        self.respond_calls.append({"messages": messages, "user_input": user_input})
         return self._responds.pop(0)
 
     def chat_with_tools(self, messages, tools):
+        self.chat_calls.append({"messages": messages, "tools": tools})
         return self._chats.pop(0)
 
-    def synthesize(self, plan, results):
+    def synthesize(self, plan, results, claude_context: str = ""):
+        self.synthesize_calls.append(
+            {"plan": plan, "results": results, "claude_context": claude_context}
+        )
         return f"synth:{len(plan)}:{len(results)}"
 
 
@@ -70,7 +78,7 @@ def _tc(name: str, args: dict, tid: str = "c1") -> ToolCallResult:
     return ToolCallResult(id=tid, name=name, args=args)
 
 
-def _build_agent(tmp_path, llm, route: Route, executor=None) -> Agent:
+def _build_agent(tmp_path, llm, route: Route, executor=None, workspace_root=None) -> Agent:
     return Agent(
         store=Store(tmp_path),
         router=FixedRouter(route),
@@ -84,6 +92,7 @@ def _build_agent(tmp_path, llm, route: Route, executor=None) -> Agent:
         llm=llm,
         trace_dir=tmp_path,
         planner=Planner(llm=llm),
+        workspace_root=workspace_root,
     )
 
 
@@ -206,7 +215,7 @@ def test_build_system_prompt_all_sections():
 
 
 def test_build_system_prompt_memory_entries():
-    """Memory entries inject index fields, but not content."""
+    """Memory entries stay out of the system prompt."""
     mem = Memory(
         entries=[
             MemoryEntry(
@@ -221,13 +230,46 @@ def test_build_system_prompt_memory_entries():
         ]
     )
     prompt = build_system_prompt(mem)
-    assert "Memory index:" in prompt
-    assert "id=mem-1" in prompt
-    assert "name=agent-framework" in prompt
-    assert "description=Phase1 memory index" in prompt
-    assert "keywords=memory,index" in prompt
-    assert "saved_at=2026-06-25T10:00:00+08:00" in prompt
+    assert "Memory index:" not in prompt
+    assert "id=mem-1" not in prompt
     assert "do not inject me" not in prompt
+
+
+def test_build_memory_context_message_includes_index_only():
+    mem = Memory(
+        entries=[
+            MemoryEntry(
+                id="mem-1",
+                type="project",
+                name="agent-framework",
+                description="Phase1 memory index",
+                keywords=["memory", "index"],
+                content="do not inject me",
+                saved_at="2026-06-25T10:00:00+08:00",
+            )
+        ]
+    )
+    msg = build_memory_context_message(mem)
+    assert msg is not None
+    assert msg["role"] == "user"
+    assert "Memory index:" in msg["content"]
+    assert "id=mem-1" in msg["content"]
+    assert "type=project" in msg["content"]
+    assert "name=agent-framework" in msg["content"]
+    assert "description=Phase1 memory index" in msg["content"]
+    assert "keywords=memory,index" in msg["content"]
+    assert "saved_at=2026-06-25T10:00:00+08:00" in msg["content"]
+    assert "content=" not in msg["content"]
+    assert "do not inject me" not in msg["content"]
+
+
+def test_build_memory_context_message_returns_claude_only_without_memory_entries():
+    msg = build_memory_context_message(Memory(), claude_context="User CLAUDE\nfollow rules")
+    assert msg is not None
+    assert msg["role"] == "user"
+    assert "User CLAUDE" in msg["content"]
+    assert "follow rules" in msg["content"]
+    assert "Memory index:" not in msg["content"]
 
 
 def test_build_system_prompt_memory_index_limits_utf8_bytes():
@@ -248,6 +290,33 @@ def test_build_system_prompt_memory_index_limits_utf8_bytes():
     )
     prompt = build_system_prompt(mem)
     assert len(prompt.encode("utf-8")) <= 25 * 1024
+
+
+def test_build_system_prompt_only_keeps_recent_20_lessons():
+    mem = Memory(lessons=[f"lesson-{i:02d}" for i in range(21)])
+    prompt = build_system_prompt(mem)
+    assert "lesson-00" not in prompt
+    assert "lesson-20" in prompt
+    assert len(mem.lessons) == 21
+
+
+async def test_direct_path_injects_memory_context_after_system(tmp_path):
+    mem_llm = FakeLLM(responds=["direct answer"])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "CLAUDE.local.md").write_text("local claude", encoding="utf-8")
+    agent = _build_agent(tmp_path, mem_llm, Route.DIRECT)
+    agent._workspace_root = workspace
+
+    out = await agent.chat("s-direct", "hello")
+    assert out == "direct answer"
+    messages = mem_llm.respond_calls[0]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert "Local CLAUDE" in messages[1]["content"]
+    assert "local claude" in messages[1]["content"]
+    assert len(messages) == 2
+    assert mem_llm.respond_calls[0]["user_input"] == "hello"
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +378,29 @@ async def test_plan_required_reload_no_orphan_tool(tmp_path):
     # final assistant is the synthesized answer
     assert s.messages[-1].role == "assistant"
     assert s.messages[-1].content == "synth:2:2"
+
+
+async def test_plan_required_passes_claude_context_to_planner_and_synthesis(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "CLAUDE.local.md").write_text("planner and synth rules", encoding="utf-8")
+    llm = FakeLLM(
+        responds=['{"steps": ["say done"]}'],
+        chats=[LLMResponse(text="step ok", tool_calls=[])],
+    )
+    ex = Executor(
+        llm=llm,
+        registry=ToolRegistry(),
+        reflexion=Reflexion(llm=None),  # type: ignore[arg-type]
+        max_steps=5,
+    )
+    agent = _build_agent(tmp_path, llm, Route.PLAN_REQUIRED, executor=ex, workspace_root=workspace)
+
+    out = await agent.chat("s-claude-plan", "go")
+
+    assert out == "synth:1:1"
+    planner_messages = llm.respond_calls[0]["messages"]
+    planner_body = "\n".join(m["content"] for m in planner_messages)
+    assert "planner and synth rules" in planner_body
+    assert llm.synthesize_calls[0]["claude_context"]
+    assert "planner and synth rules" in llm.synthesize_calls[0]["claude_context"]

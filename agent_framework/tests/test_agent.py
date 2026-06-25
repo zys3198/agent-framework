@@ -8,6 +8,7 @@ from runtime.executor import Executor
 from runtime.planner import Planner
 from runtime.reflexion import Reflexion
 from runtime.router import Route, Router
+from session.models import MemoryEntry
 from session.store import Store
 from tools.base import ToolRegistry
 
@@ -16,14 +17,18 @@ class FakeLLM:
     def __init__(self, responds=None, chats=None):
         self._responds = list(responds or [])
         self._chats = list(chats or [])
+        self.respond_calls: list[dict[str, object]] = []
+        self.chat_calls: list[dict[str, object]] = []
 
     def respond(self, messages, user_input):
+        self.respond_calls.append({"messages": messages, "user_input": user_input})
         return self._responds.pop(0)
 
     def chat_with_tools(self, messages, tools):
+        self.chat_calls.append({"messages": messages, "tools": tools})
         return self._chats.pop(0)
 
-    def synthesize(self, plan, results):
+    def synthesize(self, plan, results, claude_context: str = ""):
         return f"synth:{len(plan)}:{len(results)}"
 
 
@@ -49,7 +54,7 @@ class ScriptedExecutor(Executor):
         self._outcomes = list(outcomes)
         self.prompts: list[str] = []
 
-    async def run(self, session, prompt, trace):  # type: ignore[override]
+    async def run(self, session, prompt, trace, claude_context: str = ""):  # type: ignore[override]
         self.prompts.append(prompt)
         return self._outcomes.pop(0)
 
@@ -73,9 +78,29 @@ def _build_agent(tmp_path, llm, route: Route, executor=None) -> Agent:
 
 async def test_direct_path(tmp_path):
     llm = FakeLLM(responds=["hello world"])
+    store = Store(tmp_path)
+    session = store.load("s1")
+    session.memory.entries = [
+        MemoryEntry(
+            id="mem-1",
+            type="project",
+            name="agent-framework",
+            description="Phase1 memory index",
+            keywords=["memory", "index"],
+            content="hidden",
+            saved_at="2026-06-25T10:00:00+08:00",
+        )
+    ]
+    store.save(session)
     agent = _build_agent(tmp_path, llm, Route.DIRECT)
     out = await agent.chat("s1", "hi")
     assert out == "hello world"
+    messages = llm.respond_calls[0]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert "Memory index:" in messages[1]["content"]
+    assert len(messages) == 2
+    assert llm.respond_calls[0]["user_input"] == "hi"
     s = agent._store.load("s1")
     assert s.messages[-1].role == "assistant"
     assert s.messages[-1].content == "hello world"

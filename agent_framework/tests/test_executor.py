@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 from llm.client import LLMResponse, ToolCallResult
 from runtime.executor import Executor
 from runtime.reflexion import Lesson, Reflexion
-from session.models import Session
+from session.models import MemoryEntry, Session
 from tools.base import ToolRegistry
 from trace.logger import TraceLogger
 
@@ -16,8 +16,10 @@ class FakeLLM:
 
     def __init__(self, responses: list[LLMResponse]):
         self._responses = list(responses)
+        self.calls: list[dict[str, object]] = []
 
     def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
+        self.calls.append({"messages": messages, "tools": tools})
         return self._responses.pop(0)
 
 
@@ -78,6 +80,36 @@ async def test_no_tool_call_returns_text(tmp_path):
     out = await ex.run(Session(id="s"), "hi", _trace(tmp_path))
     assert out.text == "hello"
     assert out.needs_replan is False
+
+
+async def test_executor_injects_memory_context_before_user_prompt(tmp_path):
+    llm = FakeLLM([LLMResponse(text="hello", tool_calls=[])])
+    ex = Executor(
+        llm=llm,
+        registry=_registry(),
+        reflexion=FakeReflexion(),
+        max_steps=5,
+    )
+    s = Session(id="s")
+    s.memory.entries = [
+        MemoryEntry(
+            id="mem-1",
+            type="project",
+            name="agent-framework",
+            description="Phase1 memory index",
+            keywords=["memory", "index"],
+            content="hidden",
+            saved_at="2026-06-25T10:00:00+08:00",
+        )
+    ]
+    out = await ex.run(s, "hi", _trace(tmp_path))
+    assert out.text == "hello"
+    messages = llm.calls[0]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert "Memory index:" in messages[1]["content"]
+    assert messages[2]["role"] == "user"
+    assert messages[2]["content"] == "hi"
 
 
 async def test_one_tool_call_then_done(tmp_path):

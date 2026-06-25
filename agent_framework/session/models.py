@@ -10,6 +10,7 @@ def _now() -> str:
 
 
 MEMORY_ENTRY_TYPES = ("user", "feedback", "project", "reference")
+RECENT_LESSONS_LIMIT = 20
 
 
 @dataclass

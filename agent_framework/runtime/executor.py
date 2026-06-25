@@ -41,8 +41,10 @@ class Executor:
         self._reflexion = reflexion
         self.max_steps = max_steps
 
-    async def run(self, session: Session, prompt: str, trace: TraceLogger) -> Outcome:
-        from runtime.agent import build_system_prompt
+    async def run(
+        self, session: Session, prompt: str, trace: TraceLogger, claude_context: str = ""
+    ) -> Outcome:
+        from runtime.agent import build_memory_context_message, build_system_prompt
         from session.models import Message
         from tools.base import ToolCall
 
@@ -56,9 +58,14 @@ class Executor:
         # memory/todos/lessons were invisible to the model).
         session.messages.append(Message(role="user", content=prompt))
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": build_system_prompt(session.memory)},
-            *[m.to_dict() for m in session.messages],
+            {"role": "system", "content": build_system_prompt(session.memory)}
         ]
+        memory_msg = build_memory_context_message(
+            session.memory, claude_context=claude_context
+        )
+        if memory_msg is not None:
+            messages.append(memory_msg)
+        messages.extend(m.to_dict() for m in session.messages)
         tools = self._registry.schemas()
 
         for step in range(self.max_steps):

@@ -76,3 +76,26 @@ def test_chat_with_tools_parses_tool_call():
 def test_missing_api_key_raises():
     with pytest.raises(RuntimeError):
         LLMClient.from_env(api_key="")
+
+
+def test_synthesize_includes_claude_context_when_present():
+    fake = FakeOpenAI([_mk_choice(text="final")])
+    c = LLMClient(client=fake)
+
+    out = c.synthesize(["step"], {"0": "done"}, claude_context="User CLAUDE\nbe terse")
+
+    assert out == "final"
+    messages = fake.calls[0]["messages"]
+    assert "User CLAUDE" in messages[0]["content"]
+    assert "be terse" in messages[0]["content"]
+
+
+def test_synthesize_omits_claude_context_when_empty():
+    fake = FakeOpenAI([_mk_choice(text="final")])
+    c = LLMClient(client=fake)
+
+    out = c.synthesize(["step"], {"0": "done"})
+
+    assert out == "final"
+    content = fake.calls[0]["messages"][0]["content"]
+    assert "CLAUDE context:" not in content

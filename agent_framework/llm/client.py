@@ -69,12 +69,19 @@ class LLMClient:
             tcs.append(ToolCallResult(id=tc.id, name=tc.function.name, args=args))
         return LLMResponse(text=text, tool_calls=tcs)
 
-    def synthesize(self, plan: list[str], results: dict[str, Any]) -> str:
+    def synthesize(
+        self, plan: list[str], results: dict[str, Any], claude_context: str = ""
+    ) -> str:
         """Planner path: synthesize final answer from step results."""
-        lines = [
-            f"plan: {plan}",
-            "results: " + json.dumps(results, ensure_ascii=False, default=str),
-        ]
+        lines: list[str] = []
+        if claude_context.strip():
+            lines.extend(["CLAUDE context:", claude_context.strip()])
+        lines.extend(
+            [
+                f"plan: {plan}",
+                "results: " + json.dumps(results, ensure_ascii=False, default=str),
+            ]
+        )
         resp = self._client.chat.completions.create(
             model=self.model,
             messages=[

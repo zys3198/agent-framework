@@ -88,3 +88,24 @@ async def test_make_plan_surfaces_memory_context():
     body = "\n".join(m["content"] for m in seen["messages"])
     assert "buy milk" in body
     assert "always validate input" in body
+
+
+async def test_make_plan_limits_lessons_and_includes_claude_context():
+    seen: dict[str, object] = {}
+
+    class CapturingLLM:
+        def respond(self, messages, user_input):
+            seen["messages"] = messages
+            return '{"steps": ["a"]}'
+
+    mem = Memory(lessons=[f"lesson-{i}" for i in range(21)])
+    planner = Planner(CapturingLLM())  # type: ignore[arg-type]
+    await planner.make_plan("go", mem, claude_context="Project CLAUDE\nfollow rules")
+
+    body = "\n".join(m["content"] for m in seen["messages"])
+    assert "Project CLAUDE" in body
+    assert "follow rules" in body
+    assert "lesson-0" not in body
+    assert "lesson-1" in body
+    assert "lesson-20" in body
+    assert len(mem.lessons) == 21

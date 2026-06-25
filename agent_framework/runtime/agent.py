@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from session.models import Memory, MemoryEntry, Message
+from runtime.claude_memory import load_claude_context
+from session.models import RECENT_LESSONS_LIMIT, Memory, MemoryEntry, Message
 from trace.logger import TraceLogger
 
 STATE_IDLE = "IDLE"
@@ -38,11 +39,18 @@ def build_system_prompt(memory: Memory) -> str:
         lines.append("Plan: " + " | ".join(s.prompt for s in memory.plan))
     if memory.lessons:
         lines.append("Lessons learned:")
-        lines.extend(f"- {lesson}" for lesson in memory.lessons)
-    entries = _memory_index_lines(memory.entries)
-    if entries:
-        lines.extend(entries)
+        lines.extend(f"- {lesson}" for lesson in memory.lessons[-RECENT_LESSONS_LIMIT:])
     return "\n".join(lines)
+
+
+def build_memory_context_message(
+    memory: Memory, claude_context: str = ""
+) -> dict[str, str] | None:
+    entries = _memory_index_lines(memory.entries)
+    parts = [part for part in [claude_context.strip(), "\n".join(entries)] if part]
+    if not parts:
+        return None
+    return {"role": "user", "content": "\n\n".join(parts)}
 
 
 def _memory_index_lines(entries: list[MemoryEntry]) -> list[str]:
@@ -88,6 +96,8 @@ class Agent:
         llm: LLMClient,
         trace_dir: Path,
         planner: Planner,
+        workspace_root: Path | None = None,
+        user_home: Path | None = None,
     ) -> None:
         self._store = store
         self._router = router
@@ -95,12 +105,15 @@ class Agent:
         self._llm = llm
         self._trace_dir = trace_dir
         self._planner = planner
+        self._workspace_root = workspace_root or Path.cwd()
+        self._user_home = user_home
 
     async def chat(self, session_id: str, user_input: str) -> str:
         from runtime.router import Route
 
         session = self._store.load(session_id)
         session.fsm_state = STATE_IDLE
+        claude_context = load_claude_context(self._workspace_root, self._user_home)
 
         trace = TraceLogger(self._trace_dir / f"{Path(session_id).name}.jsonl")
         try:
@@ -110,9 +123,13 @@ class Agent:
             if route == Route.DIRECT:
                 session.fsm_state = STATE_WAITING
                 sys_msg = build_system_prompt(session.memory)
-                messages = [{"role": "system", "content": sys_msg}] + [
-                    m.to_dict() for m in session.messages
-                ]
+                messages = [{"role": "system", "content": sys_msg}]
+                memory_msg = build_memory_context_message(
+                    session.memory, claude_context=claude_context
+                )
+                if memory_msg is not None:
+                    messages.append(memory_msg)
+                messages.extend(m.to_dict() for m in session.messages)
                 answer = await asyncio.to_thread(
                     self._llm.respond, messages, user_input
                 )
@@ -123,7 +140,9 @@ class Agent:
             elif route == Route.SIMPLE_TOOL:
                 # Executor owns all session.messages persistence on this path (Contract C).
                 session.fsm_state = STATE_EXECUTING
-                outcome = await self._executor.run(session, user_input, trace)
+                outcome = await self._executor.run(
+                    session, user_input, trace, claude_context=claude_context
+                )
                 session.fsm_state = STATE_WAITING
                 if outcome.needs_replan:
                     # No replanner now; log so the failure is not silently swallowed.
@@ -132,7 +151,9 @@ class Agent:
 
             else:  # PLAN_REQUIRED
                 session.fsm_state = STATE_PLANNING
-                plan = await self._planner.make_plan(user_input, session.memory)
+                plan = await self._planner.make_plan(
+                    user_input, session.memory, claude_context=claude_context
+                )
                 session.memory.plan = plan
                 session.fsm_state = STATE_EXECUTING
 
@@ -142,7 +163,9 @@ class Agent:
                 # Replanner safety net).
                 results: dict[int, object] = {}
                 for i in range(len(plan)):
-                    outcome = await self._executor.run(session, plan[i].prompt, trace)
+                    outcome = await self._executor.run(
+                        session, plan[i].prompt, trace, claude_context=claude_context
+                    )
                     results[i] = outcome
                     if outcome.needs_replan:
                         trace.log_truncated()
@@ -151,6 +174,7 @@ class Agent:
                     self._llm.synthesize,
                     [s.prompt for s in plan],
                     {str(idx): _synthesize_entry(idx, o) for idx, o in results.items()},
+                    claude_context,
                 )
                 # Contract C: agent appends ONLY the synthesized final answer here;
                 # per-step messages were persisted by the executor.

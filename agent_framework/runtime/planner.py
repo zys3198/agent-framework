@@ -5,6 +5,8 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
+from session.models import RECENT_LESSONS_LIMIT
+
 if TYPE_CHECKING:
     from llm.client import LLMClient
     from session.models import Memory, Step
@@ -57,24 +59,34 @@ class Planner:
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
-    async def make_plan(self, user_input: str, memory: Memory) -> list[Step]:
+    async def make_plan(
+        self, user_input: str, memory: Memory, claude_context: str = ""
+    ) -> list[Step]:
         from session.models import Step
 
         messages = [
             {"role": "system", "content": _PLANNER_PROMPT},
-            {"role": "user", "content": _build_memory_context(memory)},
+            {
+                "role": "user",
+                "content": _build_memory_context(
+                    memory, claude_context=claude_context
+                ),
+            },
         ]
         text = await asyncio.to_thread(self._llm.respond, messages, user_input)
         return [Step(prompt=p) for p in _parse_steps(text or "")]
 
 
-def _build_memory_context(memory: Memory) -> str:
+def _build_memory_context(memory: Memory, claude_context: str = "") -> str:
     """Surface memory into the planner prompt (was a dead param)."""
     lines: list[str] = []
+    if claude_context.strip():
+        lines.append("CLAUDE context:")
+        lines.append(claude_context.strip())
     if memory.todos:
         lines.append("Active todos:")
         lines.extend(f"- {t.title} [{t.status}]" for t in memory.todos)
     if memory.lessons:
         lines.append("Lessons learned:")
-        lines.extend(f"- {lesson}" for lesson in memory.lessons)
+        lines.extend(f"- {lesson}" for lesson in memory.lessons[-RECENT_LESSONS_LIMIT:])
     return "\n".join(lines) if lines else "No prior context."
