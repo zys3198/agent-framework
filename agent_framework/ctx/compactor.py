@@ -61,8 +61,8 @@ class Compactor:
         self._keep = microcompact_keep
         self._auto_tokens = auto_compact_tokens
         self._breaker_limit = circuit_breaker_limit
-        self._failures = {}  # per-session failure count
-        self._tripped = set()  # per-session tripped sessions
+        self._failures: dict[str, int] = {}  # per-session failure count
+        self._tripped: set[str] = set()  # per-session tripped sessions
 
     def is_tripped(self, session_id: str) -> bool:
         return session_id in self._tripped
