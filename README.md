@@ -130,6 +130,88 @@ You are a helpful agent.
 
 ---
 
+## Memory System
+
+This framework implements a Claude Code-style memory system: **file-based memory with progressive disclosure, async recall, and layered compaction** — not vector RAG. The overhaul is tracked in `docs/PLAN.md` (Phases 0-3 complete; this section is the Phase 4 doc deliverable).
+
+### File-based memory (index always loaded, content lazy)
+
+Memory entries live on the `Session` (`session/models.py`), not in an embedding store. Each `MemoryEntry` has an `id`, `type`, `name`, `description`, `keywords`, `content`, and `saved_at`. The full index is built every turn by `build_memory_context_message()` (`runtime/agent.py`) and injected as a **user message** (soft constraint, not system prompt). Only `name`/`description`/`keywords`/`saved_at` are in the index — roughly 100 tokens per entry. The full `content` is **not** loaded by default; the model pulls it on demand via the `read_memory_body` tool (`tools/memory.py`).
+
+Two hard caps on the index (whichever hits first): `_MEMORY_INDEX_MAX_LINES = 200` lines, `_MEMORY_INDEX_MAX_BYTES = 25 * 1024` bytes.
+
+### Four memory types
+
+`MEMORY_ENTRY_TYPES = ("user", "feedback", "project", "reference")` (`session/models.py`):
+- **user** — user preferences, motivations, environment.
+- **feedback** — corrections/lessons; `content` must contain the markers `Rule`, `Why`, `How to apply`.
+- **project** — project facts/decisions; same `Rule`/`Why`/`How to apply` structure, and relative time phrases must be normalized to absolute dates.
+- **reference** — lookup material.
+
+### Write gates (`write_memory`, `tools/memory.py`)
+
+`write_memory` rejects entries that are "findable" rather than worth remembering. The heuristic gate (`_looks_like_code_or_path`) checks for fenced code blocks, assignment/`def`/`class`/`import` statements, file paths (with extensions or drive letters), and git subcommands (`git add|commit|push|...`). It also enforces: valid `type`, non-empty `name`/`content`, `keywords` as a list of strings, the `Rule`/`Why`/`How to apply` structure for `feedback`/`project`, and absolute dates for `project` (relative-time markers like "yesterday"/"上周"/"2 days ago" are rejected).
+
+### Dedup + conflict resolution on write
+
+`_find_existing_entry` matches on `(type, name)` (case-insensitive). If a match exists, the entry is **updated in place** (name/description/keywords/content/saved_at overwritten, same `id`); otherwise a new entry with `_next_id` is appended. This gives same-name-same-type overwrite (latest wins) and cross-name coexistence.
+
+### CLAUDE.md loader (`runtime/claude_memory.py`)
+
+`load_claude_context(workspace_root, user_home)` assembles permanent context from up to three layers, in this order:
+1. **Project CLAUDE.md** — traverses `workspace_root` up its parent chain, reading `CLAUDE.md` at each level (innermost wins by appearing last in the joined output).
+2. **Local CLAUDE.local.md** — `workspace_root/CLAUDE.local.md` (git-ignored personal overrides).
+3. **User CLAUDE.md** — `~/.claude/CLAUDE.md`.
+
+The merged text is loaded at the start of each `Agent.chat` and threaded through `build_memory_context_message` / `Planner.make_plan` / `Executor.run` as the `claude_context` argument. Because it is re-read every turn, it is **not** folded into compaction summaries — it is rebuilt fresh (see "Information channeling" below).
+
+### Async memory recall (`runtime/recaller.py`, wired in `runtime/executor.py`)
+
+`Recaller.recall(query, entries, current_tool)` uses a medium LLM to select relevant entry ids by `name`+`description` only (progressive disclosure — the model never sees `content` during filtering). The LLM returns strict JSON `{"ids": [...]}` parsed by `_parse_ids`; it is instructed to be conservative ("only clearly relevant").
+
+Integration in `Executor.run`:
+- At **step 0**, if a recaller is configured and entries exist, recall is kicked off as an `asyncio.Task` so it runs **in parallel** with the main model's first ReAct step.
+- After step 0, the task is awaited and two local filters are applied (no second LLM round-trip):
+  1. **Dedup** — ids already present in the injected memory index are dropped.
+  2. **Tool-avoidance** (`filter_tool_usage`) — once the LLM-chosen tool name is known, exclude entries whose `description` contains usage keywords (`how to use`, `usage`, `使用说明`, `用法`), while **keeping** caveat/bug entries. The rationale: don't distract the model with a tool's manual while it is actively calling that tool, but do keep known gotchas.
+- Surviving ids are injected as a `Recalled from memory:` user message, each line annotated with `saved_at` and a staleness reminder.
+
+### Layered compaction (`ctx/compactor.py`, demo-trimmed to 3 layers)
+
+`Compactor.compact(session)` runs at the start of every `Agent.chat`, before routing. Layers are no-ops below their thresholds, so the common path is cheap.
+
+- **Layer 1 — large-result spillover** (`spill_large_results`): tool results larger than `large_result_bytes` (default 4096) are written to disk under `spill_dir` (sha256 prefix), and the message is replaced with an 80-char preview + a `[spill:<digest>]` marker reclaimable via Read.
+- **Layer 2 — microcompact** (`microcompact`): keeps only the most recent `microcompact_keep` (default 5) tool results, dropping older `tool` messages and their preceding `assistant(tool_calls)` messages. State info (`todos`/`plan`/`workspace`) lives in `session.memory` and is **never touched** by this layer.
+- **Layer 3 — Auto-Compact** (`auto_compact`): when estimated tokens (`_estimate_tokens`, ~4 bytes/token, no tokenizer dependency) exceed `auto_compact_tokens` (default 8000), the whole conversation is sent to the LLM summarizer. The output replaces the message list with a **3-segment chain**:
+  1. `boundaryMarker` — `[COMPACT] session continuation...` with pre-compaction token count and last message ref, so the model knows this is a handoff, not a fresh start.
+  2. `summary` — a fixed 9-section summary (Primary Request and Intent; Key Technical Concepts; Files and Code Sections; Errors and fixes; Problem Solving; All user messages enumerated; Pending Tasks; Current Work at file+function granularity; Optional Next Step).
+  3. `attachments` — `todos`/`plan`/`workspace` restored **verbatim** (the "externalized recall" of state info).
+
+### Information channeling
+
+Compaction routes information by kind rather than treating all text uniformly:
+- **Semantic info** (user intent, decisions, problem-solving) → goes into the **summary**.
+- **State info** (todos/plan/workspace) → goes into **attachments**, restored verbatim — never summarized, never dropped by microcompact.
+- **Permanent context** (CLAUDE.md) → **reloaded fresh** each turn from disk, not stored in the summary.
+- **Config** (system prompt, tool list) → rebuilt every request.
+
+### Safety net
+
+- **Circuit breaker**: `auto_compact` tracks consecutive summary failures; after `circuit_breaker_limit` (default 3) it trips `circuit_tripped = True` and refuses further compaction rather than looping on a broken summarizer.
+- **Recursion guard**: `_is_compaction_output` inspects the first 3 messages for markers (`[COMPACT]`, `session continuation`, `interrupted context`); if the conversation already looks like a compaction output, it is not re-compacted (prevents infinite compact-the-compaction loops).
+
+### Why compaction over alternatives
+
+Three industry alternatives were considered and rejected (`docs/PLAN.md`, Phase 4 deliverable):
+
+- **Sliding window** (drop oldest messages past N): simple, but it drops early system instructions and task framing, losing the original intent as the conversation grows.
+- **Pure summarization** (summarize the whole history into one blob): loses fine-grained detail and chops dependencies — e.g. a `tool` result that a later step depends on gets flattened into prose, breaking the assistant(tool_calls) → tool(result) pairing the OpenAI API requires.
+- **Vector RAG recall** (embed history, retrieve top-k): breaks temporal ordering — retrieval returns by similarity, not by when things happened — and adds retrieval noise (irrelevant-but-similar chunks) and an embedding-store dependency.
+
+**Why layered compaction was chosen**: it preserves state info verbatim (todos/plan/workspace survive in attachments, so nothing the model needs to act on is lost to a summary), keeps semantic info in a structured summary (compressible without losing the narrative), and has no retrieval-ordering problem (the message chain stays sequential; nothing is re-ranked). The tradeoff accepted is summarizer LLM cost on layer-3 triggers — bounded by the circuit breaker and the 8k-token threshold.
+
+---
+
 ## 验收 Checklist (spec section 12)
 
 | 项目 | 状态 | 说明 |

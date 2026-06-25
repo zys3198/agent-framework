@@ -117,7 +117,7 @@ class Executor:
                 # exclude "usage" entries for that tool (keep caveat entries).
                 # Pure local filter, no second LLM round-trip.
                 if recall_ids and first_tool is not None:
-                    recall_ids = self._recaller.filter_tool_usage(
+                    recall_ids = self._recaller.filter_tool_usage(  # type: ignore[union-attr]
                         recall_ids, session.memory.entries
                     )
                 # Read content and inject

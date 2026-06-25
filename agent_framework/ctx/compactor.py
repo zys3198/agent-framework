@@ -48,7 +48,7 @@ class Compactor:
     def __init__(
         self,
         llm: LLMClient,
-        spill_dir: os.PathLike | str,
+        spill_dir: os.PathLike[str] | str,
         large_result_bytes: int = 4096,
         microcompact_keep: int = 5,
         auto_compact_tokens: int = 8000,

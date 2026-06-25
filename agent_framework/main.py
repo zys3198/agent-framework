@@ -107,12 +107,13 @@ def create_app(agent: Agent | None, store: Store, trace_dir: Path) -> FastAPI:
     app = FastAPI(title="agent-framework")
 
     @app.exception_handler(Exception)
-    async def global_exception_handler(request, exc: Exception):
+    async def global_exception_handler(request: Any, exc: Exception) -> Any:
         log.exception("unhandled exception: %s %s", request.method, request.url.path)
         try:
             from openai import APITimeoutError, OpenAIError
         except ImportError:
-            APITimeoutError = OpenAIError = None  # type: ignore[misc]
+            APITimeoutError = None  # type: ignore[assignment,misc]
+            OpenAIError = None  # type: ignore[assignment,misc]
         if APITimeoutError is not None and isinstance(exc, APITimeoutError):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=503, content={"detail": "LLM request timed out"})
