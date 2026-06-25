@@ -167,9 +167,24 @@ def test_circuit_breaker_trips(tmp_path):
     session.messages = [Message(role="user", content="x" * 200)]
     for _ in range(3):
         asyncio.run(c.auto_compact(session))
-    assert c.circuit_tripped is True
+    assert c.is_tripped("s1") is True
     result = asyncio.run(c.auto_compact(session))
     assert result is None or result == session.messages
+
+
+def test_circuit_breaker_isolated_per_session(tmp_path):
+    """BLOCKER fix: session A tripping breaker must NOT affect session B."""
+    llm = AsyncMock()
+    llm.respond = AsyncMock(side_effect=RuntimeError("LLM down"))
+    c = Compactor(llm, tmp_path, auto_compact_tokens=50, circuit_breaker_limit=3)
+    sA = Session(id="A")
+    sA.messages = [Message(role="user", content="x" * 200)]
+    sB = Session(id="B")
+    sB.messages = [Message(role="user", content="x" * 200)]
+    for _ in range(3):
+        asyncio.run(c.auto_compact(sA))
+    assert c.is_tripped("A") is True
+    assert c.is_tripped("B") is False  # B unaffected
 
 
 def test_recursion_guard(tmp_path):
@@ -244,3 +259,35 @@ def test_agent_compact_called_on_chat(tmp_path):
     result = asyncio.run(agent.chat("s1", "hi"))
     assert result == "answer"
     compactor.compact.assert_called_once()
+
+
+def test_agent_concurrent_chat_same_session_serialized(tmp_path):
+    """BLOCKER fix: concurrent requests to the same session must serialize
+    via per-session asyncio.Lock so load->modify->save is atomic (no lost updates)."""
+    from runtime.executor import Executor
+    from runtime.planner import Planner
+    from runtime.reflexion import Reflexion
+
+    llm = AsyncMock()
+    llm.respond = AsyncMock(return_value="ok")
+    agent = Agent(
+        store=Store(tmp_path),
+        router=_FixedRouter(),  # type: ignore[arg-type]
+        executor=Executor(
+            llm=llm,  # type: ignore[arg-type]
+            registry=ToolRegistry(),
+            reflexion=Reflexion(llm=None),  # type: ignore[arg-type]
+            max_steps=1,
+        ),
+        llm=llm,  # type: ignore[arg-type]
+        trace_dir=tmp_path,
+        planner=Planner(llm=llm),  # type: ignore[arg-type]
+    )
+
+    async def _run():
+        await agent.chat("s1", "init")
+        await asyncio.gather(agent.chat("s1", "A"), agent.chat("s1", "B"))
+
+    asyncio.run(_run())
+    s = Store(tmp_path).load("s1")
+    assert len(s.messages) == 6

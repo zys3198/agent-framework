@@ -61,8 +61,11 @@ class Compactor:
         self._keep = microcompact_keep
         self._auto_tokens = auto_compact_tokens
         self._breaker_limit = circuit_breaker_limit
-        self._consecutive_failures = 0
-        self.circuit_tripped = False
+        self._failures = {}  # per-session failure count
+        self._tripped = set()  # per-session tripped sessions
+
+    def is_tripped(self, session_id: str) -> bool:
+        return session_id in self._tripped
 
     # ---- token estimation ----
 
@@ -122,7 +125,6 @@ class Compactor:
             if (
                 msg.role == "assistant"
                 and msg.tool_calls
-                and msg.tool_calls
                 and not any(
                     tc.get("id") in keep_ids for tc in msg.tool_calls
                 )
@@ -177,7 +179,7 @@ class Compactor:
     async def auto_compact(self, session: Session) -> list[Message] | None:
         """Full summary when estimated tokens exceed threshold.
         Returns new compacted message list, or None if not triggered."""
-        if self.circuit_tripped:
+        if session.id in self._tripped:
             return None
         if self._is_compaction_output(session.messages):
             return None  # recursion guard
@@ -197,13 +199,14 @@ class Compactor:
                 prompt,
             )
         except Exception as e:
-            self._consecutive_failures += 1
-            log.warning("auto_compact summary failed (%d/%d): %s", self._consecutive_failures, self._breaker_limit, e)
-            if self._consecutive_failures >= self._breaker_limit:
-                self.circuit_tripped = True
-                log.error("circuit breaker tripped after %d summary failures", self._consecutive_failures)
+            n = self._failures.get(session.id, 0) + 1
+            self._failures[session.id] = n
+            log.warning("auto_compact summary failed (%d/%d): %s", n, self._breaker_limit, e)
+            if n >= self._breaker_limit:
+                self._tripped.add(session.id)
+                log.error("circuit breaker tripped for session %s after %d failures", session.id, n)
             return None
-        self._consecutive_failures = 0
+        self._failures.pop(session.id, None)
         # build 3-segment chain: boundaryMarker + summary + attachments
         last_id = str(session.messages[-1].tool_call_id or "") if session.messages else ""
         boundary = (

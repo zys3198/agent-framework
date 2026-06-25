@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -109,8 +110,23 @@ class Agent:
         self._workspace_root = workspace_root or Path.cwd()
         self._user_home = user_home
         self._compactor = compactor
+        # Per-session lock serializes the full load->modify->save transaction,
+        # preventing lost updates when concurrent requests hit the same session.
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._locks_guard = asyncio.Lock()
+
+    async def _lock_for(self, session_id: str) -> asyncio.Lock:
+        async with self._locks_guard:
+            if session_id not in self._session_locks:
+                self._session_locks[session_id] = asyncio.Lock()
+            return self._session_locks[session_id]
 
     async def chat(self, session_id: str, user_input: str) -> str:
+        lock = await self._lock_for(session_id)
+        async with lock:
+            return await self._chat_impl(session_id, user_input)
+
+    async def _chat_impl(self, session_id: str, user_input: str) -> str:
         from runtime.router import Route
 
         session = self._store.load(session_id)
@@ -118,7 +134,9 @@ class Agent:
         # Phase 3: compact accumulated context before the next user turn.
         # Layers are no-ops below threshold, so this is cheap when not needed.
         if self._compactor is not None:
-            await self._compactor.compact(session)
+            compacted = await self._compactor.compact(session)
+            if compacted:
+                self._store.save(session)  # persist compaction before proceeding
         claude_context = load_claude_context(self._workspace_root, self._user_home)
 
         trace = TraceLogger(self._trace_dir / f"{Path(session_id).name}.jsonl")
