@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
+    from runtime.recaller import Recaller
     from runtime.reflexion import Reflexion
     from session.models import Session
     from tools.base import ToolRegistry
@@ -34,15 +37,19 @@ class Executor:
         registry: ToolRegistry,
         reflexion: Reflexion,
         max_steps: int,
+        recaller: Recaller | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
         self._reflexion = reflexion
         self.max_steps = max_steps
+        self._recaller = recaller
 
     async def run(
         self, session: Session, prompt: str, trace: TraceLogger, claude_context: str = ""
     ) -> Outcome:
+        from datetime import UTC, datetime
+
         from runtime.agent import build_memory_context_message, build_system_prompt
         from session.models import Message
         from tools.base import ToolCall
@@ -65,12 +72,83 @@ class Executor:
         if memory_msg is not None:
             messages.append(memory_msg)
         messages.extend(m.to_dict() for m in session.messages)
+
+        # Start parallel recall if recaller is configured and entries exist
+        # Guard max_steps>0: otherwise the loop never reaches the await and
+        # the task would leak ("Task was destroyed but it is pending").
+        recall_task: asyncio.Task[list[str]] | None = None
+        if (
+            self._recaller is not None
+            and session.memory.entries
+            and self.max_steps > 0
+        ):
+            try:
+                recall_task = asyncio.create_task(
+                    self._recaller.recall(prompt, session.memory.entries)
+                )
+            except Exception:  # don't let recall setup abort the main path
+                recall_task = None
+
         tools = self._registry.schemas()
 
         for step in range(self.max_steps):
             trace.log_step(step)
             resp = await self._llm.chat_with_tools(messages, tools)
             trace.log_llm_call(step, [t.name for t in resp.tool_calls])
+            # First tool the LLM picks, so the tool-avoidance filter can run
+            # on the recall results post-hoc (the parallel recall started
+            # before the tool name was known).
+            first_tool = (
+                resp.tool_calls[0].name if step == 0 and resp.tool_calls else None
+            )
+
+            # After first step: inject recall results (parallel recall)
+            if step == 0 and recall_task is not None:
+                recall_ids = await recall_task
+                recall_task = None
+                # Dedup: skip ids already in memory index
+                if memory_msg and recall_ids:
+                    injected_ids: set[str] = set()
+                    content = memory_msg.get("content", "") or ""
+                    for m in re.finditer(r"id=(\S+)", content):
+                        injected_ids.add(m.group(1))
+                    recall_ids = [rid for rid in recall_ids if rid not in injected_ids]
+                # Tool-avoidance: now that the LLM-chosen tool name is known,
+                # exclude "usage" entries for that tool (keep caveat entries).
+                # Pure local filter, no second LLM round-trip.
+                if recall_ids and first_tool is not None:
+                    recall_ids = self._recaller.filter_tool_usage(
+                        recall_ids, session.memory.entries
+                    )
+                # Read content and inject
+                if recall_ids:
+                    entry_map = {e.id: e for e in session.memory.entries}
+                    now = datetime.now(UTC)
+                    recall_lines: list[str] = ["", "---", "Recalled from memory:"]
+                    for rid in recall_ids:
+                        entry = entry_map.get(rid)
+                        if entry is None:
+                            continue
+                        try:
+                            saved = datetime.fromisoformat(entry.saved_at)
+                            if saved.tzinfo is None:
+                                saved = saved.replace(tzinfo=UTC)
+                            delta_days = (now - saved).days
+                            if delta_days == 0:
+                                age = "saved today"
+                            elif delta_days == 1:
+                                age = "saved yesterday"
+                            else:
+                                age = f"saved {delta_days} days ago"
+                        except (ValueError, TypeError):
+                            age = ""
+                        recall_lines.append(
+                            f"- {entry.name}: {entry.content} "
+                            f"({age}, verify before acting)"
+                        )
+                    messages.append(
+                        {"role": "user", "content": "\n".join(recall_lines)}
+                    )
 
             if not resp.tool_calls:
                 session.messages.append(Message(role="assistant", content=resp.text))
