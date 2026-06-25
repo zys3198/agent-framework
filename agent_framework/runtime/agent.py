@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from session.models import Memory, Message
+from session.models import Memory, MemoryEntry, Message
 from trace.logger import TraceLogger
 
 STATE_IDLE = "IDLE"
@@ -13,6 +13,8 @@ STATE_PLANNING = "PLANNING"
 STATE_EXECUTING = "EXECUTING"
 STATE_REFLECTING = "REFLECTING"
 STATE_WAITING = "WAITING"
+_MEMORY_INDEX_MAX_LINES = 200
+_MEMORY_INDEX_MAX_BYTES = 25 * 1024
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -37,7 +39,31 @@ def build_system_prompt(memory: Memory) -> str:
     if memory.lessons:
         lines.append("Lessons learned:")
         lines.extend(f"- {lesson}" for lesson in memory.lessons)
+    entries = _memory_index_lines(memory.entries)
+    if entries:
+        lines.extend(entries)
     return "\n".join(lines)
+
+
+def _memory_index_lines(entries: list[MemoryEntry]) -> list[str]:
+    if not entries:
+        return []
+
+    lines = ["Memory index:"]
+    total_bytes = len(lines[0].encode("utf-8"))
+    for entry in entries:
+        line = (
+            f"- id={entry.id} type={entry.type} name={entry.name} "
+            f"description={entry.description} "
+            f"keywords={','.join(entry.keywords)} "
+            f"saved_at={entry.saved_at}"
+        )
+        next_bytes = total_bytes + 1 + len(line.encode("utf-8"))
+        if len(lines) >= _MEMORY_INDEX_MAX_LINES or next_bytes > _MEMORY_INDEX_MAX_BYTES:
+            break
+        lines.append(line)
+        total_bytes = next_bytes
+    return lines
 
 
 class Agent:

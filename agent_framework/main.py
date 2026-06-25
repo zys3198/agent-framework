@@ -23,6 +23,7 @@ from runtime.router import Router
 from session.store import Store
 from tools.base import ToolRegistry
 from tools.calculator import Calculator
+from tools.memory import ReadMemoryBody, WriteMemory
 from tools.search import Search
 from tools.todo import Todo
 
@@ -45,6 +46,8 @@ def build_agent() -> Agent:
     registry.register(Calculator())  # type: ignore[arg-type]
     registry.register(Search())  # type: ignore[arg-type]
     registry.register(Todo())  # type: ignore[arg-type]
+    registry.register(WriteMemory())  # type: ignore[arg-type]
+    registry.register(ReadMemoryBody())  # type: ignore[arg-type]
     llm = LLMClient.from_env(
         api_key=config.DEEPSEEK_API_KEY,
         base_url=config.DEEPSEEK_BASE_URL,

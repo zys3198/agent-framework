@@ -6,6 +6,7 @@ import pytest
 from session.models import Session
 from tools.base import ToolCall, ToolRegistry
 from tools.calculator import Calculator
+from tools.memory import ReadMemoryBody, WriteMemory
 from tools.search import Search
 from tools.todo import Todo
 
@@ -153,3 +154,174 @@ def test_todo_unknown_action():
     s = Session(id="s")
     res = _run(t.run({"action": "delete", "id": "1"}, s))
     assert res.startswith("ERROR")
+
+
+def test_write_memory_success_and_read_body():
+    tool = WriteMemory()
+    s = Session(id="s")
+
+    out = _run(
+        tool.run(
+            {
+                "type": "user",
+                "name": "喜欢的模型",
+                "description": "记录偏好",
+                "content": "喜欢简洁回答",
+                "keywords": ["偏好", "回答"],
+            },
+            s,
+        )
+    )
+    assert out == "1"
+    assert len(s.memory.entries) == 1
+    assert s.memory.entries[0].name == "喜欢的模型"
+
+    body = _run(ReadMemoryBody().run({"id": "1"}, s))
+    assert body == "喜欢简洁回答"
+
+
+def test_write_memory_invalid_type():
+    tool = WriteMemory()
+    s = Session(id="s")
+    out = _run(
+        tool.run(
+            {
+                "type": "bad",
+                "name": "x",
+                "description": "d",
+                "content": "c",
+                "keywords": [],
+            },
+            s,
+        )
+    )
+    assert out.startswith("ERROR")
+
+
+def test_write_memory_feedback_needs_why():
+    tool = WriteMemory()
+    s = Session(id="s")
+    out = _run(
+        tool.run(
+            {
+                "type": "feedback",
+                "name": "code review",
+                "description": "d",
+                "content": "Rule: keep tests small\nHow to apply: write one assertion",
+                "keywords": [],
+            },
+            s,
+        )
+    )
+    assert out.startswith("ERROR")
+
+
+def test_write_memory_rejects_code_and_paths_and_git():
+    tool = WriteMemory()
+    s = Session(id="s")
+
+    bad_samples = [
+        {
+            "type": "user",
+            "name": "code",
+            "description": "d",
+            "content": "def hello():\n    return 1",
+            "keywords": [],
+        },
+        {
+            "type": "user",
+            "name": "path",
+            "description": "d",
+            "content": r"C:\\tmp\\file.py",
+            "keywords": [],
+        },
+        {
+            "type": "user",
+            "name": "git",
+            "description": "d",
+            "content": "git rebase --hard HEAD~1",
+            "keywords": [],
+        },
+        {
+            "type": "user",
+            "name": "assignment",
+            "description": "d",
+            "content": "x = 1",
+            "keywords": [],
+        },
+        {
+            "type": "user",
+            "name": "loop",
+            "description": "d",
+            "content": "for i in range(3): pass",
+            "keywords": [],
+        },
+    ]
+    results = [_run(tool.run(sample, s)) for sample in bad_samples]
+    assert all(res.startswith("ERROR") for res in results)
+
+
+def test_write_memory_project_rejects_relative_time():
+    tool = WriteMemory()
+    s = Session(id="s")
+    relative_contents = [
+        "Rule: 记录项目决策\nWhy: 方便回顾\nHow to apply: 写入绝对日期, 今天完成",
+        "Rule: log dates\nWhy: avoid stale context\nHow to apply: updated 2 days ago",
+        "Rule: 记录项目决策\nWhy: 方便回顾\nHow to apply: 明年再处理",
+        "Rule: 记录项目决策\nWhy: 方便回顾\nHow to apply: 昨晚修过",
+    ]
+    results = [
+        _run(
+            tool.run(
+                {
+                    "type": "project",
+                    "name": f"计划-{i}",
+                    "description": "d",
+                    "content": content,
+                    "keywords": [],
+                },
+                s,
+            )
+        )
+        for i, content in enumerate(relative_contents)
+    ]
+    assert all(res.startswith("ERROR") for res in results)
+
+
+def test_write_memory_dedup_updates_existing_entry():
+    tool = WriteMemory()
+    s = Session(id="s")
+
+    first = _run(
+        tool.run(
+            {
+                "type": "reference",
+                "name": "API",
+                "description": "first",
+                "content": "v1",
+                "keywords": ["a"],
+            },
+            s,
+        )
+    )
+    second = _run(
+        tool.run(
+            {
+                "type": "reference",
+                "name": "api",
+                "description": "second",
+                "content": "v2",
+                "keywords": ["b"],
+            },
+            s,
+        )
+    )
+
+    assert first == "1"
+    assert second == "1"
+    assert len(s.memory.entries) == 1
+    entry = s.memory.entries[0]
+    assert entry.description == "second"
+    assert entry.content == "v2"
+    assert entry.keywords == ["b"]
+    assert entry.name == "api"

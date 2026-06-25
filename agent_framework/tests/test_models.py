@@ -1,4 +1,4 @@
-from session.models import Memory, Message, Session, Step, TodoItem
+from session.models import Memory, MemoryEntry, Message, Session, Step, TodoItem
 
 
 def test_todo_item_defaults():
@@ -68,3 +68,40 @@ def test_memory_plan_step_roundtrip():
     m2 = Memory.from_dict(d)
     assert len(m2.plan) == 2
     assert m2.plan[0].prompt == "step one"
+
+
+def test_memory_entry_roundtrip():
+    entry = MemoryEntry(
+        id="mem-1",
+        type="user",
+        name="Alice",
+        description="remember preference",
+        keywords=["pref", "user"],
+        content="likes concise replies",
+        saved_at="2026-06-25T10:00:00+08:00",
+    )
+    assert entry.to_dict() == {
+        "id": "mem-1",
+        "type": "user",
+        "name": "Alice",
+        "description": "remember preference",
+        "keywords": ["pref", "user"],
+        "content": "likes concise replies",
+        "saved_at": "2026-06-25T10:00:00+08:00",
+    }
+    entry2 = MemoryEntry.from_dict(entry.to_dict())
+    assert entry2 == entry
+
+
+def test_memory_entries_roundtrip():
+    m = Memory(entries=[MemoryEntry(id="mem-1", type="project", name="Repo", description="project note", keywords=["repo"], content="session framework", saved_at="2026-06-25T10:00:00+08:00")])
+    d = m.to_dict()
+    assert d["entries"][0]["id"] == "mem-1"
+    m2 = Memory.from_dict(d)
+    assert len(m2.entries) == 1
+    assert m2.entries[0].type == "project"
+
+
+def test_memory_from_dict_missing_entries_defaults_to_empty_list():
+    m = Memory.from_dict({"todos": [], "plan": [], "lessons": [], "workspace": {}, "future_key": "ignore"})
+    assert m.entries == []

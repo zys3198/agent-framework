@@ -18,7 +18,7 @@ from runtime.executor import Executor
 from runtime.planner import Planner
 from runtime.reflexion import Reflexion
 from runtime.router import Route, Router
-from session.models import Memory, Step, TodoItem
+from session.models import Memory, MemoryEntry, Step, TodoItem
 from session.store import Store
 from tools.base import ToolRegistry
 
@@ -203,6 +203,51 @@ def test_build_system_prompt_all_sections():
     assert "step A | step B" in prompt
     assert "Lessons learned:" in prompt
     assert "- always validate input types" in prompt
+
+
+def test_build_system_prompt_memory_entries():
+    """Memory entries inject index fields, but not content."""
+    mem = Memory(
+        entries=[
+            MemoryEntry(
+                id="mem-1",
+                type="project",
+                name="agent-framework",
+                description="Phase1 memory index",
+                keywords=["memory", "index"],
+                content="do not inject me",
+                saved_at="2026-06-25T10:00:00+08:00",
+            )
+        ]
+    )
+    prompt = build_system_prompt(mem)
+    assert "Memory index:" in prompt
+    assert "id=mem-1" in prompt
+    assert "name=agent-framework" in prompt
+    assert "description=Phase1 memory index" in prompt
+    assert "keywords=memory,index" in prompt
+    assert "saved_at=2026-06-25T10:00:00+08:00" in prompt
+    assert "do not inject me" not in prompt
+
+
+def test_build_system_prompt_memory_index_limits_utf8_bytes():
+    """Memory index budget is byte-based, so non-ASCII text cannot exceed 25KB."""
+    mem = Memory(
+        entries=[
+            MemoryEntry(
+                id=str(i),
+                type="project",
+                name="项" * 1000,
+                description="描" * 1000,
+                keywords=["记忆"],
+                content="not indexed",
+                saved_at="2026-06-25T10:00:00+08:00",
+            )
+            for i in range(20)
+        ]
+    )
+    prompt = build_system_prompt(mem)
+    assert len(prompt.encode("utf-8")) <= 25 * 1024
 
 
 # ---------------------------------------------------------------------------

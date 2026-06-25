@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import main
 from main import create_app
 from session.models import Message
 from session.store import Store
@@ -196,3 +197,22 @@ def test_delete_trace_unlink_failure_degrades(
     assert resp.json() == {"deleted": True, "session": True, "trace": False}
     assert not (tmp_path / f"{sid}.json").exists()
     assert (tmp_path / f"{sid}.jsonl").exists()
+
+
+def test_build_agent_registers_memory_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeLLM:
+        pass
+
+    monkeypatch.setattr(main.LLMClient, "from_env", lambda **_: FakeLLM())
+    monkeypatch.setattr(main.config, "SESSION_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(main.config, "TRACE_DIR", tmp_path / "traces")
+
+    agent = main.build_agent()
+    names = {
+        schema["function"]["name"] for schema in agent._executor._registry.schemas()
+    }
+
+    assert "write_memory" in names
+    assert "read_memory_body" in names

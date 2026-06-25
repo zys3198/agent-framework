@@ -9,6 +9,9 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+MEMORY_ENTRY_TYPES = ("user", "feedback", "project", "reference")
+
+
 @dataclass
 class TodoItem:
     id: str
@@ -49,10 +52,37 @@ class Step:
 
 
 @dataclass
+class MemoryEntry:
+    id: str
+    type: str
+    name: str
+    description: str
+    keywords: list[str] = field(default_factory=list)
+    content: str = ""
+    saved_at: str = field(default_factory=_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> MemoryEntry:
+        return cls(
+            id=d["id"],
+            type=d["type"],
+            name=d["name"],
+            description=d.get("description", ""),
+            keywords=list(d.get("keywords", [])),
+            content=d.get("content", ""),
+            saved_at=d.get("saved_at", _now()),
+        )
+
+
+@dataclass
 class Memory:
     todos: list[TodoItem] = field(default_factory=list)
     plan: list[Step] = field(default_factory=list)
     lessons: list[str] = field(default_factory=list)
+    entries: list[MemoryEntry] = field(default_factory=list)
     workspace: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +90,7 @@ class Memory:
             "todos": [t.to_dict() for t in self.todos],
             "plan": [s.to_dict() for s in self.plan],
             "lessons": list(self.lessons),
+            "entries": [entry.to_dict() for entry in self.entries],
             "workspace": dict(self.workspace),
         }
 
@@ -69,6 +100,7 @@ class Memory:
             todos=[TodoItem.from_dict(t) for t in d.get("todos", [])],
             plan=[Step.from_dict(s) for s in d.get("plan", [])],
             lessons=list(d.get("lessons", [])),
+            entries=[MemoryEntry.from_dict(entry) for entry in d.get("entries", [])],
             workspace=dict(d.get("workspace", {})),
         )
 
