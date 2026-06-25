@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,15 @@ class Store:
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+
+    def _lock_for(self, session_id: str) -> threading.Lock:
+        with self._locks_guard:
+            if session_id not in self._locks:
+                self._locks[session_id] = threading.Lock()
+            return self._locks[session_id]
 
     def _path(self, session_id: str) -> Path:
         # 防路径穿越: 只取文件名, 丢弃任何目录部分
@@ -34,29 +44,31 @@ class Store:
         return self.root / f"{safe}.json"
 
     def load(self, session_id: str) -> Session:
-        p = self._path(session_id)
-        if not p.exists():
-            return Session(id=session_id)
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            return Session.from_dict(data)
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            bak = p.with_suffix(p.suffix + ".corrupt.bak")
+        with self._lock_for(session_id):
+            p = self._path(session_id)
+            if not p.exists():
+                return Session(id=session_id)
             try:
-                os.replace(p, bak)
-                log.warning("corrupt session file backed up: %s -> %s (%s)", p, bak, e)
-            except OSError:
-                pass
-            return Session(id=session_id)
+                data = json.loads(p.read_text(encoding="utf-8"))
+                return Session.from_dict(data)
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                bak = p.with_suffix(p.suffix + ".corrupt.bak")
+                try:
+                    os.replace(p, bak)
+                    log.warning("corrupt session file backed up: %s -> %s (%s)", p, bak, e)
+                except OSError:
+                    pass
+                return Session(id=session_id)
 
     def save(self, session: Session) -> None:
-        p = self._path(session.id)
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        os.replace(tmp, p)
+        with self._lock_for(session.id):
+            p = self._path(session.id)
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            tmp.write_text(
+                json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp, p)
 
     def delete(self, session_id: str) -> bool:
         """Remove a session file. Returns True if a file was deleted."""

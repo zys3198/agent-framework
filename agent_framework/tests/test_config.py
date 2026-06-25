@@ -19,3 +19,16 @@ def test_env_overrides(monkeypatch):
     importlib.reload(config_mod)
     assert config_mod.MAX_STEPS == 5
     assert config_mod.PORT == 9000
+
+# -- Phase 3: non-numeric env falls back to default --
+
+
+def test_non_numeric_env_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("MAX_STEPS", "abc")
+    monkeypatch.setenv("PORT", "xyz")
+    import importlib
+
+    import config as config_mod
+    importlib.reload(config_mod)
+    assert config_mod.MAX_STEPS == 10
+    assert config_mod.PORT == 8000

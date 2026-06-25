@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,9 +33,13 @@ class LLMClient:
         client: AsyncOpenAI,
         model: str = "deepseek-chat",
         recall_model: str | None = None,
+        timeout: float = 30.0,
+        max_retries: int = 3,
     ) -> None:
         self._client = client
         self.model = model
+        self.timeout = timeout
+        self.max_retries = max_retries
         # Phase 2b recall/gather uses a separate model; falls back to self.model.
         self.recall_model = recall_model
 
@@ -41,19 +49,23 @@ class LLMClient:
         api_key: str | None = None,
         base_url: str = "https://api.deepseek.com",
         model: str = "deepseek-chat",
+        timeout: float = 30.0,
+        max_retries: int = 3,
     ) -> LLMClient:
         if not api_key:
             raise RuntimeError("DEEPSEEK_API_KEY missing")
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        return cls(client, model=model)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries)
+        return cls(client, model=model, timeout=timeout, max_retries=max_retries)
 
     async def respond(self, messages: list[dict[str, Any]], user_input: str) -> str:
         """Router=direct path. No tools passed."""
         msgs = [*messages, {"role": "user", "content": user_input}]
         kw: dict[str, Any] = {"model": self.model, "messages": msgs}
+        start = time.perf_counter()
         resp = await self._client.chat.completions.create(**kw)
+        _log_usage("respond", self.model, start, resp)
         return resp.choices[0].message.content or ""
 
     async def chat_with_tools(
@@ -64,7 +76,9 @@ class LLMClient:
         kw: dict[str, Any] = {"model": self.model, "messages": messages}
         if tools:
             kw["tools"] = tools
+        start = time.perf_counter()
         resp = await self._client.chat.completions.create(**kw)
+        _log_usage("chat_with_tools", self.model, start, resp)
         msg = resp.choices[0].message
         text = msg.content or ""
         tcs: list[ToolCallResult] = []
@@ -89,6 +103,7 @@ class LLMClient:
                 "results: " + json.dumps(results, ensure_ascii=False, default=str),
             ]
         )
+        start = time.perf_counter()
         resp = await self._client.chat.completions.create(
             model=self.model,
             messages=[
@@ -99,4 +114,13 @@ class LLMClient:
                 }
             ],
         )
+        _log_usage("synthesize", self.model, start, resp)
         return resp.choices[0].message.content or ""
+
+def _log_usage(method: str, model: str, start: float, resp: Any) -> None:
+    elapsed = time.perf_counter() - start
+    u = getattr(resp, "usage", None)
+    pt = u.prompt_tokens if u else 0
+    ct = u.completion_tokens if u else 0
+    tt = u.total_tokens if u else 0
+    log.info("llm:%s model=%s in=%.3fs tok=%s/%s/%s", method, model, elapsed, pt, ct, tt)

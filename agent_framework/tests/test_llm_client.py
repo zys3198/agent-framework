@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from llm.client import LLMClient, LLMResponse, ToolCallResult  # noqa: F401
@@ -99,3 +101,68 @@ async def test_synthesize_omits_claude_context_when_empty():
     assert out == "final"
     content = fake.calls[0]["messages"][0]["content"]
     assert "CLAUDE context:" not in content
+
+
+# -- Phase 3: usage logging + timeout/max_retries --
+
+def _mk_usage(pt=10, ct=20, tt=30):
+    return type("Usage", (), {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt})()
+
+
+def _mk_resp_with_usage(text="", usage=None):
+    msg = type("M", (), {"content": text, "tool_calls": None})()
+    choice = type("Choice", (), {"message": msg})()
+    attrs = {"choices": [choice]}
+    if usage is not None:
+        attrs["usage"] = usage
+    return type("Resp", (), attrs)()
+
+
+async def test_respond_logs_usage(caplog):
+    caplog.set_level(logging.INFO)
+    usage = _mk_usage(10, 20, 30)
+    fake = FakeOpenAI([_mk_resp_with_usage("ok", usage)])
+    c = LLMClient(client=fake)
+    await c.respond([], "hi")
+    assert "llm:respond" in caplog.text
+    assert "10/20/30" in caplog.text
+
+
+async def test_respond_usage_none_does_not_crash(caplog):
+    caplog.set_level(logging.INFO)
+    fake = FakeOpenAI([_mk_resp_with_usage("ok")])
+    c = LLMClient(client=fake)
+    await c.respond([], "hi")
+    assert "llm:respond" in caplog.text
+    assert "0/0/0" in caplog.text
+
+
+async def test_chat_with_tools_logs_usage(caplog):
+    caplog.set_level(logging.INFO)
+    usage = _mk_usage(5, 15, 20)
+    fake = FakeOpenAI([_mk_resp_with_usage("42", usage)])
+    c = LLMClient(client=fake)
+    await c.chat_with_tools([], [])
+    assert "llm:chat_with_tools" in caplog.text
+
+
+async def test_synthesize_logs_usage(caplog):
+    caplog.set_level(logging.INFO)
+    usage = _mk_usage(8, 12, 20)
+    fake = FakeOpenAI([_mk_resp_with_usage("final", usage)])
+    c = LLMClient(client=fake)
+    await c.synthesize(["a"], {"0": "done"})
+    assert "llm:synthesize" in caplog.text
+
+
+def test_from_env_accepts_timeout_max_retries():
+    import pytest
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        LLMClient.from_env(api_key="", timeout=15.0, max_retries=1)
+
+
+def test_init_stores_timeout_max_retries():
+    fake_client = object()
+    c = LLMClient(client=fake_client, timeout=42.0, max_retries=7)
+    assert c.timeout == 42.0
+    assert c.max_retries == 7

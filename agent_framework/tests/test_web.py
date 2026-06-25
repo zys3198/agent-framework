@@ -216,3 +216,98 @@ def test_build_agent_registers_memory_tools(
 
     assert "write_memory" in names
     assert "read_memory_body" in names
+
+# -- Phase 3: global exception handler mapping --
+
+
+def _get_exception_handler(app):
+    for key, value in app.exception_handlers.items():
+        if key is Exception:
+            return value
+    return None
+
+
+def test_openai_timeout_maps_to_503(tmp_path):
+    from fastapi import Request
+    from openai import APITimeoutError
+
+    from main import create_app
+    from session.store import Store
+
+    store = Store(tmp_path)
+    app = create_app(None, store, tmp_path)
+    handler = _get_exception_handler(app)
+    assert handler is not None
+
+    scope = {"type": "http", "method": "POST", "path": "/chat", "headers": []}
+    request = Request(scope)
+    exc = APITimeoutError("LLM timeout")
+
+    import inspect
+    if inspect.iscoroutinefunction(handler):
+        import asyncio
+        response = asyncio.run(handler(request, exc))
+    else:
+        response = handler(request, exc)
+
+    assert response.status_code == 503
+    import json
+    body = json.loads(response.body)
+    assert body["detail"] == "LLM request timed out"
+
+
+def test_openai_error_maps_to_502(tmp_path):
+    from fastapi import Request
+    from openai import OpenAIError
+
+    from main import create_app
+    from session.store import Store
+
+    store = Store(tmp_path)
+    app = create_app(None, store, tmp_path)
+    handler = _get_exception_handler(app)
+    assert handler is not None
+
+    scope = {"type": "http", "method": "POST", "path": "/chat", "headers": []}
+    request = Request(scope)
+    exc = OpenAIError("API error")
+
+    import inspect
+    if inspect.iscoroutinefunction(handler):
+        import asyncio
+        response = asyncio.run(handler(request, exc))
+    else:
+        response = handler(request, exc)
+
+    assert response.status_code == 502
+    import json
+    body = json.loads(response.body)
+    assert body["detail"] == "LLM API error"
+
+
+def test_generic_exception_returns_500(tmp_path):
+    from fastapi import Request
+
+    from main import create_app
+    from session.store import Store
+
+    store = Store(tmp_path)
+    app = create_app(None, store, tmp_path)
+    handler = _get_exception_handler(app)
+    assert handler is not None
+
+    scope = {"type": "http", "method": "POST", "path": "/chat", "headers": []}
+    request = Request(scope)
+    exc = ValueError("something broke")
+
+    import inspect
+    if inspect.iscoroutinefunction(handler):
+        import asyncio
+        response = asyncio.run(handler(request, exc))
+    else:
+        response = handler(request, exc)
+
+    assert response.status_code == 500
+    import json
+    body = json.loads(response.body)
+    assert body["detail"] == "internal error"

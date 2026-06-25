@@ -101,6 +101,24 @@ def create_app(agent: Agent | None, store: Store, trace_dir: Path) -> FastAPI:
     read-only routes still work.
     """
     app = FastAPI(title="agent-framework")
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc: Exception):
+        log.exception("unhandled exception: %s %s", request.method, request.url.path)
+        try:
+            from openai import APITimeoutError, OpenAIError
+        except ImportError:
+            APITimeoutError = OpenAIError = None  # type: ignore[misc]
+        if APITimeoutError is not None and isinstance(exc, APITimeoutError):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=503, content={"detail": "LLM request timed out"})
+        if OpenAIError is not None and isinstance(exc, OpenAIError):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=502, content={"detail": "LLM API error"})
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": "internal error"})
+
+
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

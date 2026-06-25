@@ -1,3 +1,6 @@
+import json
+import threading
+
 from session.models import Message, TodoItem
 from session.store import Store
 
@@ -70,3 +73,29 @@ def test_list_returns_summaries(tmp_path):
     assert s1["title"] == "新会话"
     s3row = next(i for i in items if i["id"] == "sid-3")
     assert s3row["title"] == "帮我算 123 乘以 456"
+
+# -- Phase 3: concurrent save under per-session lock --
+
+
+def test_concurrent_save_does_not_corrupt(tmp_path):
+    """Two concurrent save calls on the same session must not corrupt JSON."""
+    store = Store(tmp_path)
+    s = store.load("conc")
+    s.messages.append(Message(role="user", content="init"))
+    store.save(s)
+
+    def writer(i):
+        s2 = store.load("conc")
+        s2.messages.append(Message(role="user", content=f"msg{i:d}"))
+        store.save(s2)
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    data = json.loads((tmp_path / "conc.json").read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    msgs = [m["content"] for m in data["messages"]]
+    assert "init" in msgs
