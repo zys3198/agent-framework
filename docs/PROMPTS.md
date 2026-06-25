@@ -135,3 +135,43 @@ Bug 修复先写失败测试重现, 再改实现。新功能至少列验收 chec
 - **FastAPI + uvicorn**: Web 层。
 - **openai SDK** (指向 DeepSeek base_url): LLM 调用。
 - 不用 LangChain / OpenHands / AutoGen -- 这是面试要求。
+
+
+---
+
+## 6. Memory 系统改造的 prompt 设计 (Phase 1-3)
+
+### 6.1 write_memory 启发式闸门
+
+`tools/memory.py` 的 `WriteMemory.run` 在写入前用三道纯启发式规则拦截"能查到的不该存"，不做 LLM 二次校验（PLAN.md Phase 1 决策：demo 不做重）。`_looks_like_code_or_path` 用 `_CODE_PATTERNS` 正则组匹配代码特征：```围栏块、`def/class/import/return` 语句、`for/while/if:` 控制流、`=>` 箭头、文件扩展名（`.py/.js/.ts/...`）、绝对路径（`[A-Za-z]:\` 或 `/`）、`git add/commit/push/...` 命令；命中任一即返回 `"content looks like code, file path, or git command"`。第二道闸门是结构校验：`feedback`/`project` 类型必须同时含 `Rule`/`Why`/`How to apply` 三标记（`_has_required_structure`）。第三道闸门是时间规范化：`project` 类型若命中 `_RELATIVE_TIME_MARKERS`（"今天/昨天/上周/next week..."）或 `_RELATIVE_TIME_PATTERNS`（"N days ago"/"in N days"/"next Monday"）即拒，强制绝对日期。
+
+### 6.2 read_memory_body 渐进披露
+
+`tools/memory.py` 的 `ReadMemoryBody` 是配套的"第二阶段懒加载"工具。索引常驻只暴露 `name`/`description`/`keywords`，模型判断某条相关后才调 `read_memory_body(id)` 按 `entry.id` 取回完整 `content`。`description` 明确为 `"Read the content of a memory entry by id."`，参数仅 `id`。这样避免所有条目正文常驻上下文，把 content 的 token 开销推迟到真正需要时（PLAN.md Phase 1：content 不常驻，模型匹配到才 read_memory_body 读）。
+
+### 6.3 memory 索引注入
+
+`runtime/agent.py` 的 `build_memory_context_message` 把 memory 索引拼成 **user message**（非 system prompt，软约束），放在 system 消息之后。`_memory_index_lines` 逐条格式化为 `- id=... type=... name=... description=... keywords=... saved_at=...`（约 100 token/条）。双闸截断：`_MEMORY_INDEX_MAX_LINES = 200` 行 与 `_MEMORY_INDEX_MAX_BYTES = 25 * 1024`（25KB），逐条累加字节，哪个先到就 `break`。返回值 `role="user"`，与 `claude_context`（若有）用空行拼接后整体作为一个 user 消息注入。状态信息（todos/plan/lessons）不进索引，而是 `build_system_prompt` 里作为 system prompt 硬约束拼入。
+
+### 6.4 CLAUDE.md 四层加载
+
+`runtime/claude_memory.py` 的 `load_claude_context(workspace_root, user_home)` 向上遍历目录树收集项目级 `CLAUDE.md`。逻辑：`[*reversed(resolved_root.parents), resolved_root]` 即从文件系统根逐级下到 workspace_root，每层读 `CLAUDE.md`，命中即 `_section("Project CLAUDE: {file}", text)` 入列（外层先、内层后，越靠近 workspace 越靠后覆盖）。之后再追加 `workspace_root/CLAUDE.local.md`（本地个人覆盖）与 `~/.claude/CLAUDE.md`（用户全局）。最终 `"
+
+".join(sections)`。全部文件用 `encoding="utf-8"` 读取并 `.strip()`。四层 = 项目树多层 CLAUDE.md + CLAUDE.local.md + 用户全局 CLAUDE.md。
+
+### 6.5 召回 prompt
+
+`runtime/recaller.py` 的 `Recaller.recall(query, entries, current_tool)` 先把候选清单拼成 `id=... name=... description=...`（仅 name+description，不喂 content），再构造召回 prompt：
+
+> Memory entries:
+{candidates}
+
+Query: {query}
+
+Return strict JSON {"ids": [...]} with ids of relevant entries. Be conservative — only clearly relevant.
+
+system 角色为 `"You are a memory recall filter."`，用中型模型（PLAN.md：留接口可换，先用 deepseek-chat）筛选。`_parse_ids` 用 `re.search(r"\{.*\}", text, re.DOTALL)` + `json.loads` 提取，解析失败返回空（宁缺毋滥）。随后 `filter_tool_usage` 纯本地过滤：当 `current_tool` 已知时，按 `_USAGE_KEYWORDS = ["用法", "how to use", "usage", "使用说明"]` 在 description 中匹配，剔除"用法/文档"类条目，保留 caveat/bug 类——即工具执行阶段不再召回泛用说明，只留陷阱警告。
+
+### 6.6 压缩摘要 prompt
+
+`ctx/compactor.py` 的 `_build_summary_prompt` 生成固定 9 章节摘要。`_SUMMARY_SECTIONS` 为硬编码列表：`Primary Request and Intent` -> `Key Technical Concepts` -> `Files and Code Sections` -> `Errors and fixes` -> `Problem Solving` -> `All user messages (enumerate, do not summarize)` -> `Pending Tasks` -> `Current Work (finest granularity: file + function name)` -> `Optional Next Step`，各章节拼成 `### {section}`。prompt 前言声明"本会话是从之前一次因上下文耗尽而中断的对话延续过来的"，附完整对话历史 + 用户消息枚举。输出三段链（`auto_compact`）：首段 `boundaryMarker`（`[COMPACT] session continuation...`，含压缩前 token 估算与 last message ref），中段 LLM 摘要，末段 `_build_attachments` 原样贴状态信息（Todos/Plan/Workspace）——语义内容走 LLM 摘要通道，状态信息走附件原样恢复通道，两者分道。安全网：`_RECURSION_MARKERS` 防重复压缩 + 每 session 熔断计数（默认 3 次失败即 trip）。
