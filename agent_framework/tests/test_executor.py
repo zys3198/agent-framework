@@ -18,7 +18,7 @@ class FakeLLM:
         self._responses = list(responses)
         self.calls: list[dict[str, object]] = []
 
-    def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
+    async def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
         self.calls.append({"messages": messages, "tools": tools})
         return self._responses.pop(0)
 

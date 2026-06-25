@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from openai import OpenAI
+    from openai import AsyncOpenAI
 
 
 @dataclass
@@ -24,9 +24,16 @@ class LLMResponse:
 class LLMClient:
     """DeepSeek (OpenAI-compatible) wrapper. Injectable client for tests."""
 
-    def __init__(self, client: OpenAI, model: str = "deepseek-chat") -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str = "deepseek-chat",
+        recall_model: str | None = None,
+    ) -> None:
         self._client = client
         self.model = model
+        # Phase 2b recall/gather uses a separate model; falls back to self.model.
+        self.recall_model = recall_model
 
     @classmethod
     def from_env(
@@ -37,19 +44,19 @@ class LLMClient:
     ) -> LLMClient:
         if not api_key:
             raise RuntimeError("DEEPSEEK_API_KEY missing")
-        from openai import OpenAI
+        from openai import AsyncOpenAI
 
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         return cls(client, model=model)
 
-    def respond(self, messages: list[dict[str, Any]], user_input: str) -> str:
+    async def respond(self, messages: list[dict[str, Any]], user_input: str) -> str:
         """Router=direct path. No tools passed."""
         msgs = [*messages, {"role": "user", "content": user_input}]
         kw: dict[str, Any] = {"model": self.model, "messages": msgs}
-        resp = self._client.chat.completions.create(**kw)
+        resp = await self._client.chat.completions.create(**kw)
         return resp.choices[0].message.content or ""
 
-    def chat_with_tools(
+    async def chat_with_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> LLMResponse:
         """Function-calling path. `tools` already in standard OpenAI shape
@@ -57,7 +64,7 @@ class LLMClient:
         kw: dict[str, Any] = {"model": self.model, "messages": messages}
         if tools:
             kw["tools"] = tools
-        resp = self._client.chat.completions.create(**kw)
+        resp = await self._client.chat.completions.create(**kw)
         msg = resp.choices[0].message
         text = msg.content or ""
         tcs: list[ToolCallResult] = []
@@ -69,7 +76,7 @@ class LLMClient:
             tcs.append(ToolCallResult(id=tc.id, name=tc.function.name, args=args))
         return LLMResponse(text=text, tool_calls=tcs)
 
-    def synthesize(
+    async def synthesize(
         self, plan: list[str], results: dict[str, Any], claude_context: str = ""
     ) -> str:
         """Planner path: synthesize final answer from step results."""
@@ -82,7 +89,7 @@ class LLMClient:
                 "results: " + json.dumps(results, ensure_ascii=False, default=str),
             ]
         )
-        resp = self._client.chat.completions.create(
+        resp = await self._client.chat.completions.create(
             model=self.model,
             messages=[
                 {

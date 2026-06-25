@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -130,9 +129,7 @@ class Agent:
                 if memory_msg is not None:
                     messages.append(memory_msg)
                 messages.extend(m.to_dict() for m in session.messages)
-                answer = await asyncio.to_thread(
-                    self._llm.respond, messages, user_input
-                )
+                answer = await self._llm.respond(messages, user_input)
                 # DIRECT: agent persists user + assistant (executor does it for tool paths)
                 session.messages.append(Message(role="user", content=user_input))
                 session.messages.append(Message(role="assistant", content=answer))
@@ -170,8 +167,7 @@ class Agent:
                     if outcome.needs_replan:
                         trace.log_truncated()
 
-                answer = await asyncio.to_thread(
-                    self._llm.synthesize,
+                answer = await self._llm.synthesize(
                     [s.prompt for s in plan],
                     {str(idx): _synthesize_entry(idx, o) for idx, o in results.items()},
                     claude_context,

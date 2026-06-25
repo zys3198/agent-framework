@@ -11,7 +11,7 @@ class FakeLLM:
     def __init__(self, responses: list[str]):
         self._responses = list(responses)
 
-    def respond(self, messages: list[dict], user_input: str) -> str:
+    async def respond(self, messages: list[dict], user_input: str) -> str:
         return self._responses.pop(0)
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -70,7 +69,7 @@ class Executor:
 
         for step in range(self.max_steps):
             trace.log_step(step)
-            resp = await asyncio.to_thread(self._llm.chat_with_tools, messages, tools)
+            resp = await self._llm.chat_with_tools(messages, tools)
             trace.log_llm_call(step, [t.name for t in resp.tool_calls])
 
             if not resp.tool_calls:

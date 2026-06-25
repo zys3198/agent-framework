@@ -9,7 +9,7 @@ class ScriptedLLM:
         self._reply = reply
         self.calls = 0
 
-    def respond(self, messages, user_input):
+    async def respond(self, messages, user_input):
         self.calls += 1
         return self._reply
 
@@ -75,7 +75,7 @@ async def test_make_plan_surfaces_memory_context():
     seen: dict[str, object] = {}
 
     class CapturingLLM:
-        def respond(self, messages, user_input):
+        async def respond(self, messages, user_input):
             seen["messages"] = messages
             return '{"steps": ["a"]}'
 
@@ -94,7 +94,7 @@ async def test_make_plan_limits_lessons_and_includes_claude_context():
     seen: dict[str, object] = {}
 
     class CapturingLLM:
-        def respond(self, messages, user_input):
+        async def respond(self, messages, user_input):
             seen["messages"] = messages
             return '{"steps": ["a"]}'
 

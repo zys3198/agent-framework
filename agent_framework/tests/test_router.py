@@ -11,7 +11,7 @@ class FakeLLM:
         self._responses = list(responses)
         self.calls: list[tuple[list[dict], str]] = []
 
-    def respond(self, messages: list[dict], user_input: str) -> str:
+    async def respond(self, messages: list[dict], user_input: str) -> str:
         self.calls.append((messages, user_input))
         return self._responses.pop(0)
 

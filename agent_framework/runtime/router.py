@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -35,7 +34,7 @@ class Router:
             {"role": "system", "content": _ROUTER_PROMPT},
             {"role": "user", "content": _build_router_context(memory)},
         ]
-        text = await asyncio.to_thread(self._llm.respond, messages, user_input)
+        text = await self._llm.respond(messages, user_input)
         upper = (text or "").strip().upper()
         for r in Route:
             if r.value in upper:

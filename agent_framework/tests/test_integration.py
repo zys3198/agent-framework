@@ -37,15 +37,15 @@ class FakeLLM:
         self.chat_calls: list[dict[str, Any]] = []
         self.synthesize_calls: list[dict[str, Any]] = []
 
-    def respond(self, messages, user_input):
+    async def respond(self, messages, user_input):
         self.respond_calls.append({"messages": messages, "user_input": user_input})
         return self._responds.pop(0)
 
-    def chat_with_tools(self, messages, tools):
+    async def chat_with_tools(self, messages, tools):
         self.chat_calls.append({"messages": messages, "tools": tools})
         return self._chats.pop(0)
 
-    def synthesize(self, plan, results, claude_context: str = ""):
+    async def synthesize(self, plan, results, claude_context: str = ""):
         self.synthesize_calls.append(
             {"plan": plan, "results": results, "claude_context": claude_context}
         )

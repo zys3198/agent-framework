@@ -14,7 +14,7 @@ class FakeOpenAI:
         def __init__(self, outer):
             self.outer = outer
 
-        def create(self, **kw):
+        async def create(self, **kw):
             self.outer.calls.append(kw)
             return self.outer._responses.pop(0)
 
@@ -32,23 +32,23 @@ def _mk_choice(text="", tool_calls=None):
     return type("Resp", (), {"choices": [choice]})()
 
 
-def test_respond_no_tools():
+async def test_respond_no_tools():
     fake = FakeOpenAI([_mk_choice(text="hello")])
     c = LLMClient(client=fake)
-    out = c.respond(messages=[], user_input="hi")
+    out = await c.respond(messages=[], user_input="hi")
     assert out == "hello"
     assert "tools" not in fake.calls[0]
 
 
-def test_chat_with_tools_returns_text():
+async def test_chat_with_tools_returns_text():
     fake = FakeOpenAI([_mk_choice(text="42")])
     c = LLMClient(client=fake)
-    resp = c.chat_with_tools(messages=[], tools=[])
+    resp = await c.chat_with_tools(messages=[], tools=[])
     assert resp.text == "42"
     assert resp.tool_calls == []
 
 
-def test_chat_with_tools_parses_tool_call():
+async def test_chat_with_tools_parses_tool_call():
     tc = type(
         "TC",
         (),
@@ -66,7 +66,7 @@ def test_chat_with_tools_parses_tool_call():
     )()
     fake = FakeOpenAI([_mk_choice(text=None, tool_calls=[tc])])
     c = LLMClient(client=fake)
-    resp = c.chat_with_tools(messages=[], tools=[])
+    resp = await c.chat_with_tools(messages=[], tools=[])
     assert resp.text == ""
     assert len(resp.tool_calls) == 1
     assert resp.tool_calls[0].name == "calculator"
@@ -78,11 +78,11 @@ def test_missing_api_key_raises():
         LLMClient.from_env(api_key="")
 
 
-def test_synthesize_includes_claude_context_when_present():
+async def test_synthesize_includes_claude_context_when_present():
     fake = FakeOpenAI([_mk_choice(text="final")])
     c = LLMClient(client=fake)
 
-    out = c.synthesize(["step"], {"0": "done"}, claude_context="User CLAUDE\nbe terse")
+    out = await c.synthesize(["step"], {"0": "done"}, claude_context="User CLAUDE\nbe terse")
 
     assert out == "final"
     messages = fake.calls[0]["messages"]
@@ -90,11 +90,11 @@ def test_synthesize_includes_claude_context_when_present():
     assert "be terse" in messages[0]["content"]
 
 
-def test_synthesize_omits_claude_context_when_empty():
+async def test_synthesize_omits_claude_context_when_empty():
     fake = FakeOpenAI([_mk_choice(text="final")])
     c = LLMClient(client=fake)
 
-    out = c.synthesize(["step"], {"0": "done"})
+    out = await c.synthesize(["step"], {"0": "done"})
 
     assert out == "final"
     content = fake.calls[0]["messages"][0]["content"]

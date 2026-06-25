@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -28,12 +27,11 @@ class Reflexion:
         prompt = (
             f"A tool call failed.\n"
             f"tool: {call.name}\n"
-            f"args: {call.args}\n"
+           f"args: {call.args}\n"
             f"error: {error}\n"
             f"Write ONE short lesson to avoid this next time."
         )
-        text = await asyncio.to_thread(
-            self._llm.respond,
+        text = await self._llm.respond(
             [{"role": "system", "content": "You produce concise lessons."}],
             prompt,
         )

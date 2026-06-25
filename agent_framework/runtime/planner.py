@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import TYPE_CHECKING, Any
@@ -73,7 +72,7 @@ class Planner:
                 ),
             },
         ]
-        text = await asyncio.to_thread(self._llm.respond, messages, user_input)
+        text = await self._llm.respond(messages, user_input)
         return [Step(prompt=p) for p in _parse_steps(text or "")]
 
 
