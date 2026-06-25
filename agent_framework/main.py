@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
+from ctx.compactor import Compactor
 from llm.client import LLMClient
 from runtime.agent import Agent
 from runtime.executor import Executor
@@ -54,6 +55,8 @@ def build_agent() -> Agent:
         model=config.MODEL,
     )
     store = Store(config.SESSION_DIR)
+    spill_dir = config.SESSION_DIR.parent / "spill"
+    compactor = Compactor(llm=llm, spill_dir=spill_dir)
     return Agent(
         store=store,
         router=Router(llm=llm),
@@ -67,6 +70,7 @@ def build_agent() -> Agent:
         trace_dir=config.TRACE_DIR,
         planner=Planner(llm=llm),
         workspace_root=Path.cwd(),
+        compactor=compactor,
     )
 
 

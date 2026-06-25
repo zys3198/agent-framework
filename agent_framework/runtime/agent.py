@@ -17,6 +17,7 @@ _MEMORY_INDEX_MAX_LINES = 200
 _MEMORY_INDEX_MAX_BYTES = 25 * 1024
 
 if TYPE_CHECKING:
+    from ctx.compactor import Compactor
     from llm.client import LLMClient
     from runtime.executor import Executor
     from runtime.planner import Planner
@@ -97,6 +98,7 @@ class Agent:
         planner: Planner,
         workspace_root: Path | None = None,
         user_home: Path | None = None,
+        compactor: Compactor | None = None,
     ) -> None:
         self._store = store
         self._router = router
@@ -106,12 +108,17 @@ class Agent:
         self._planner = planner
         self._workspace_root = workspace_root or Path.cwd()
         self._user_home = user_home
+        self._compactor = compactor
 
     async def chat(self, session_id: str, user_input: str) -> str:
         from runtime.router import Route
 
         session = self._store.load(session_id)
         session.fsm_state = STATE_IDLE
+        # Phase 3: compact accumulated context before the next user turn.
+        # Layers are no-ops below threshold, so this is cheap when not needed.
+        if self._compactor is not None:
+            await self._compactor.compact(session)
         claude_context = load_claude_context(self._workspace_root, self._user_home)
 
         trace = TraceLogger(self._trace_dir / f"{Path(session_id).name}.jsonl")
