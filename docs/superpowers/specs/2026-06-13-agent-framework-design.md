@@ -41,7 +41,7 @@
 ┌────────────────────────▼────────────────────────────────┐
 │  Agent Orchestrator (runtime/agent.py)                   │
 │  ───────────────────────────────────────────────────    │
-│   FSM(F) 驱动状态转移，串联下面四层                      	 │
+│   fsm_state 字段驱动状态记录，串联下面四层（FSM 模块已删） │
 │                                                          │
 │   ┌─────────┐   ┌──────────┐   ┌──────────┐   ┌───────┐	│
 │   │ Router  │──▶│ Planner  │──▶│ Executor │──▶│Reply │ │
@@ -49,8 +49,8 @@
 │   └─────────┘   └──────────┘   └──────────┘   └───────┘	│
 │        │              │              │                   │
 │        │         生成 plan      function-calling loop    │
-│        │        + Replanner     + Reflexion 自纠 (E)      │
-│        │          (D′) 重规划   + ReWOO (C′) 并行簇       │
+│        │        （D′/C′ 已删）   + Reflexion 自纠 (E)      │
+│        │                      + step-0 异步 memory 召回  │
 └────────┬──────────────┬──────────────┬──────────────────┘
          │              │              │
 ┌────────▼──────────────▼──────────────▼──────────────────┐
@@ -59,7 +59,6 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 五族职责映射
 ### 1.2 族职责映射（现状 4 族；原 D′ Replanner / C′ ReWOO / F FSM 已删）
 
 | 族 | 模块 | 职责 | 触发时机 |
@@ -93,7 +92,9 @@ IDLE ──input──▶ ROUTING ──┬─▶ RESPONDING(direct) ─▶ IDLE
                                                               └─▶ RESPONDING(abort)
 ```
 
-合法转移（非法转移抛 `InvalidTransition`）：
+合法转移（**逻辑语义**；独立 FSM 模块已删，`InvalidTransition` 不再抛，`fsm_state` 仅作记录）：
+
+> 现状：下表中带 `REPLANNING` 的 4 条转移因 Replanner 删除已失效。实际路径是 Reflexion 攒满 3 条 lesson → 返回 `needs_replan` → `synthesize` 标 `[STEP i FAILED]`，不再进入 REPLANNING 状态。
 
 | from | event | to |
 |------|-------|-----|
@@ -104,14 +105,14 @@ IDLE ──input──▶ ROUTING ──┬─▶ RESPONDING(direct) ─▶ IDLE
 | PLANNING | plan_ready | EXECUTING |
 | EXECUTING | tool_error | REFLECTING |
 | REFLECTING | retry | EXECUTING |
-| EXECUTING | replan_needed | REPLANNING |
-| REFLECTING | retry_exhausted | REPLANNING |
-| REPLANNING | plan_updated | EXECUTING |
-| REPLANNING | abort | RESPONDING |
+| ~~EXECUTING | replan_needed | REPLANNING~~ | 已失效（Replanner 删） |
+| ~~REFLECTING | retry_exhausted | REPLANNING~~ | 已失效（Replanner 删） |
+| ~~REPLANNING | plan_updated | EXECUTING~~ | 已失效（Replanner 删） |
+| ~~REPLANNING | abort | RESPONDING~~ | 已失效（Replanner 删） |
 | EXECUTING | done | RESPONDING |
 | RESPONDING | replied | IDLE |
 
-> **REFLECTING vs REPLANNING 区分**：REFLECTING = 微观自纠，同一步学 lesson 重试（族 E）；REPLANNING = 宏观自纠，修订剩余 plan 步骤（族 D′）。链路：`tool_error → REFLECTING → 重试 → retry_exhausted → REPLANNING → 改 plan → EXECUTING 新步`。`MAX_REPLANS`（默认 2）防爆循环。
+> **REFLECTING vs REPLANNING 区分（历史）**：REFLECTING = 微观自纠，同一步学 lesson 重试（族 E）；REPLANNING = 宏观自纠（族 D′，已删）。现状链路：`tool_error → REFLECTING → 重试 → reflexion_exhausted → 返回 needs_replan → synthesize 标 [STEP i FAILED]`。~~`MAX_REPLANS`（默认 2）防爆循环~~ 已删。
 
 Todo 子状态（memory 内）：`NONE → PLANNED → IN_PROGRESS → DONE`，由 `todo` 工具驱动。
 
@@ -158,6 +159,7 @@ agent_framework/
 ├── static/
 │   └── index.html          # 暖色极简聊天 UI (vanilla JS fetch, 无构建)
 ├── tests/                  # 18 个测试文件 (见 §10)
+├── tests/                  # 17 个测试文件 (见 §10)
 ├── README.md
 └── PROMPTS.md              # AI Prompt 与问题解决记录
 ```
@@ -165,11 +167,9 @@ agent_framework/
 **单一职责边界**（每个模块应能独立理解 + 独立测试）：
 - `router` 只决定走哪条路径，不执行。
 - `planner` 只产出步骤列表，不执行。
-- `replanner` 只修订剩余 plan，不执行步骤；不产出 lesson（那是 reflexion）。
-- `rewoo` 只在独立步骤簇内做 DAG 规划/执行/合成，不决定是否进入簇（由 planner 检测）。
 - `executor` 只跑 function-calling loop，不决定路由；返回 `needs_replan` 标志，不自行重规划。
 - `reflexion` 只产出 lesson，不重试（重试由 executor 控制）。
-- `fsm` 只管状态合法性，不业务逻辑。
+- ~~`replanner`~~ / ~~`rewoo`~~ / ~~`fsm`~~ 三模块已删（Phase 0）。`fsm_state` 字段由 agent 内联设置，不强制合法转移。
 - `store` 只读写 JSON，不解析语义。
 
 ---
@@ -391,7 +391,7 @@ class Session:
 
 **召回时机（when）**：
 1. **每轮开始**：`Agent.chat` 入口 `store.load(session_id)` → 拿回完整 Session（messages + memory + fsm_state）。
-2. **每次 Executor 构造请求**：`_build_messages` 从 `session.memory` 取当前 todos / plan / lessons，注入 system prompt。
+2. **每次 Executor 构造请求**：`build_system_prompt(memory)` 从 `session.memory` 取当前 todos / plan / lessons，注入 system prompt。
 3. **每轮结束**：`store.save(session)` → 工具写过的 memory、Reflexion 产出的 lesson、FSM 新状态全部落盘。
 4. **跨进程重启**：因 JSON 持久化，进程重启后下轮仍能 load 回状态 → 跨轮次继续执行成立。
 
@@ -514,9 +514,11 @@ compaction 按信息类型而非统一文本路由：
 | LLM API 异常（网络/限流/鉴权） | 上抛 → FastAPI 捕获 → HTTP 500 + 错误体；session 不 save（保持上一致状态） |
 | JSON 文件损坏 | load 时 try/except，损坏则备份后重建空 session，trace 记录 |
 | 达到 MAX_STEPS | Executor 截断，返回强制结束语，trace 标 `truncated=true` |
-| Replan 超限（`MAX_REPLANS`） | 停止重规划，用旧 plan 剩余步继续，trace 标 `replan_capped`，最终走 RESPONDING |
-| ReWOO solver 证据不足 | 升级 REPLANNING（族 D′）重规划；若 REPLANNING 也失败 → RESPONDING 兜底回答 |
-| FSM 非法转移 | 抛 `InvalidTransition`，trace 记录，session 回 IDLE |
+| Reflexion 穷尽（攒满 3 条 lesson 仍失败） | 返回 `needs_replan=True`，`_flush_pending_tools` 补齐剩余 tool message 防孤儿，由 synthesize 标 `[STEP i FAILED]` |
+| Auto-Compact 摘要器连续失败 | 熔断（`circuit_breaker_limit=3`）后 `circuit_tripped`，拒绝后续压缩（见 §5.5） |
+| ~~Replan 超限（`MAX_REPLANS`）~~ | 已删（Phase 0）：无 Replanner / MAX_REPLANS |
+| ~~ReWOO solver 证据不足~~ | 已删（Phase 0）：无 ReWOO |
+| ~~FSM 非法转移 抛 `InvalidTransition`~~ | 已删（Phase 0）：FSM 模块移除，`fsm_state` 仅记录 |
 | Router 误判 | 允许 Executor 内 function-calling 兜底（LLM 仍可自主决定调工具） |
 | 编码（Windows） | 所有文件 IO `encoding="utf-8"`；subprocess 传 `PYTHONIOENCODING=utf-8` |
 
@@ -534,14 +536,11 @@ compaction 按信息类型而非统一文本路由：
 {"ts": "...", "type": "tool_call", "step": 0, "name": "todo.create", "args": {"title":"写大纲"}}
 {"ts": "...", "type": "tool_result", "step": 0, "result": "created #1"}
 {"ts": "...", "type": "reflexion", "step": 1, "lesson": "..."}
-{"ts": "...", "type": "replan", "count": 1, "reason": "retry_exhausted", "revised_steps": 2}
-{"ts": "...", "type": "rewoo_dag", "step": 2, "nodes": ["E1","E2"], "edges": [["E1","E2"]]}
-{"ts": "...", "type": "rewoo_solve", "step": 2, "vars": ["E1","E2"], "evidence_sufficient": true}
 {"ts": "...", "type": "route", "value": "plan_required"}
-{"ts": "...", "type": "fsm", "from": "ROUTING", "to": "PLANNING"}
-{"ts": "...", "type": "fsm", "from": "EXECUTING", "to": "REPLANNING"}
 {"ts": "...", "type": "truncated"}
 ```
+
+> 现状（Phase 0 后）trace/logger.py 实际只 emit 7 种 type：`step` / `llm_call` / `tool_call` / `tool_result` / `reflexion` / `route` / `truncated`。上方 `replan` / `rewoo_dag` / `rewoo_solve` / `fsm` 四类已随 ReWOO/Replanner/FSM 删除而移除。
 
 - `GET /trace/{session_id}`：返回日志，前端可折叠展示。
 - 作用：笔试要求"工具调用 trace 或执行日志"；调试用；演示用。
@@ -556,7 +555,7 @@ compaction 按信息类型而非统一文本路由：
 - 关键方法：
   - `chat_with_tools(messages, tools) -> Resp(tool_calls, text)`
   - `respond(messages, input) -> str`（Router=direct 路径，不传 tools）
-  - `synthesize(plan, results) -> str`（Planner 路径末尾合成）
+  - `synthesize(plan, results, project_context) -> str`（Planner 路径末尾合成，第三参透传 AGENTS.md 上下文）
 - 配置集中在 `config.py`，不硬编码 key。
 
 ---
@@ -581,17 +580,24 @@ compaction 按信息类型而非统一文本路由：
 
 ## 10. 测试策略
 
+> 现状：17 个测试文件，155 passed。test_fsm / test_replanner / test_rewoo / test_session_cross_turn 已随对应代码删除。
+
 | 层 | 测试 | 说明 |
 |----|------|------|
 | 工具 | `test_tools.py` | calculator 安全性（注入用例）、search 命中、todo CRUD |
-| FSM | `test_fsm.py` | 合法/非法转移、todo 子状态、REPLANNING 4 条新转移 |
 | Executor | `test_executor.py` | mock LLMClient：①无 tool_call 直接返 ②一轮 tool_call 后返 ③max_steps 截断 ④工具异常触发 reflexion ⑤返回 `needs_replan` 标志 |
-| Replanner | `test_replanner.py` | mock：①retry_exhausted 触发 replan ②`MAX_REPLANS` 截断 ③修订后剩余步骤生效、已完成步不重跑 |
-| ReWOO | `test_rewoo.py` | mock：①独立步骤打成 DAG ②变量绑定落 `memory.workspace` ③solver 判证据不足 → 触发 replan（C′→D′ 链路） |
-| 跨轮次 | `test_session_cross_turn.py` | §5.4 剧本：轮1建 todo → 轮2读回，断言 memory 持久 |
+| Router | `test_router.py` | DIRECT/SIMPLE_TOOL/PLAN_REQUIRED 分类 |
+| Planner | `test_planner.py` | JSON 解析、Step 构造 |
+| Agent 编排 | `test_agent.py` | DIRECT/SIMPLE_TOOL/PLAN_REQUIRED 三路径 + Contract C |
+| Memory System | `test_compactor.py` / `test_recaller.py` / `test_agent_memory.py` / `test_models.py` | 三层 compaction、异步召回、AGENTS.md loader、数据模型 |
+| Memory 工具 | `test_store.py` / `test_llm_client.py` / `test_config.py` | 持久化、DeepSeek wrapper、env 配置 |
+| Web 层 | `test_web.py` / `test_trace.py` | FastAPI 路由、trace 日志 |
+| Reflexion | `test_reflexion.py` | lesson 产出、exhaustion 阈值 |
+| 跨轮次 | `test_integration.py` | §5.4 剧本回归：Contract C 四消息序列、reload 不变量、replan 标注 |
 | 集成 | 手动 + 录屏 | 真 DeepSeek API 跑 §5.4 全剧本 |
+| E2E | `test_e2e_deepseek.py` | 真 DeepSeek API（无 key 时 skip）：DIRECT/SIMPLE_TOOL/cross-turn memory/compaction |
 
-LLM 调用在单测里全部 mock，避免消耗 API + 保证确定性。
+除 `test_e2e_deepseek.py`（真 API）外，LLM 调用全部 mock（FakeLLM / ScriptedExecutor），避免消耗 API + 保证确定性。
 
 ---
 
@@ -624,7 +630,7 @@ LLM 调用在单测里全部 mock，避免消耗 API + 保证确定性。
 - [x] trace 完整记录每步，前端可展示
 - [x] README 含运行/设计/memory 三段
 - [x] PROMPTS.md 含 prompt 与问题记录
-- [x] 单测全绿（mock LLM，**155 passed**，2026-06-25 实测）
+- [x] 单测全绿（除 4 个 test_e2e_deepseek 跑真 API 外全 mock，**155 passed**，2026-06-25 实测）
 - [x] Memory System（Phase 2-4）：file-based memory 索引/正文懒加载、`write_memory` 门控、异步召回、AGENTS.md 三层聚合、三层 compaction（熔断 + 递归守卫）—— 见 §5.5
 
 ---

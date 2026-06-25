@@ -57,8 +57,9 @@ cd agent_framework
 | D — Planner | `runtime/planner.py` | 复杂任务分解为有序 step 列表 (JSON 解析) |
 | C — Executor | `runtime/executor.py` | function-calling 循环: LLM <-> tool dispatch <-> result 回填 |
 | E — Reflexion | `runtime/reflexion.py` | 工具失败时学 lesson, 微观自纠 (同一步重试) |
-| F — 状态跟踪 | `runtime/agent.py`（内联常量） | session 级状态字符串（IDLE/PLANNING/EXECUTING/REFLECTING/WAITING），独立 FSM 模块已删除 |
 
+> **状态字段（非族）**：`Session.fsm_state` 字符串常量（IDLE/PLANNING/EXECUTING/REFLECTING/WAITING），由 `runtime/agent.py` 内联设置，不再算独立族。
+>
 > **已删（Phase 0，commit `f4c9de9`/`fdc9728`）**：~~D' Replanner~~（宏观重规划，dead path）、~~C' ReWOO~~（并行 DAG，function-calling 单步已支持并行 tool_call）、~~独立 FSM 模块~~（降级为字符串常量）。失败步不再重规划，改交 `synthesize` 标 `[STEP i FAILED]`。
 
 ### Agent 主循环
@@ -277,7 +278,7 @@ agent_framework/
     todo.py            # 待办管理
     memory.py          # Phase 2: WriteMemory (门控) + ReadMemoryBody (懒读正文)
   trace/logger.py      # JSONL 执行日志
-  tests/               # 18 个测试文件, 155 passed
+  tests/               # 17 个测试文件, 155 passed
   static/index.html    # 前端 UI
 docs/superpowers/      # spec + 实现计划
 PROMPTS.md             # AI 辅助开发记录
