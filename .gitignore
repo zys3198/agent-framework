@@ -42,3 +42,7 @@ Thumbs.db
 # Local-only notes (not for the repo)
 docs/面试记录.txt
 docs/面试记录-结构化.md
+
+# Tutorial (local learning material, not part of the framework)
+.tutorial-maker/
+agent-framework-tutorial/
