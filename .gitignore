@@ -46,3 +46,6 @@ docs/面试记录-结构化.md
 # Tutorial (local learning material, not part of the framework)
 .tutorial-maker/
 agent-framework-tutorial/
+
+# Local-only dev notes
+docs/claude-code-context-management.md
