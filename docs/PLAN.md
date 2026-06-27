@@ -6,6 +6,15 @@
 
 改进本框架 memory 召回(面试官作业),借鉴 Claude Code 真实机制(不做 RAG),顺带修地基缺陷、删死代码、补生产化债务。
 
+## 2026-06-27 架构收深计划
+
+本轮不新增功能，目标是收深已有 seam：
+- `Executor.run()` 返回 `ExecutionResult`，让 tool-turn 结果和 message ownership 显式化。
+- `runtime/memory_projector.py` 集中 memory -> prompt/index/attachments 的投影策略。
+- `Store.with_session()` 提供同步 load->mutate->save 事务 seam；async chat 仍由 Agent 的 per-session asyncio lock 串行化。
+
+不做 provider-neutral LLM 抽象；只有一个 DeepSeek/OpenAI-compatible Adapter，提前抽象收益不足。
+
 ## 阻塞性决策(已定)
 
 - 路线:复刻 Claude Code 真实机制(文件式 memory + 渐进披露 + 中型模型筛选 + 分层压缩)。异步并行召回是核心上的增量,不是并列方案。

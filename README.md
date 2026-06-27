@@ -55,8 +55,9 @@ cd agent_framework
 |---|---|---|
 | I — Router | `runtime/router.py` | 一次轻量 LLM 调用, 分类输入为 DIRECT / SIMPLE_TOOL / PLAN_REQUIRED |
 | D — Planner | `runtime/planner.py` | 复杂任务分解为有序 step 列表 (JSON 解析) |
-| C — Executor | `runtime/executor.py` | function-calling 循环: LLM <-> tool dispatch <-> result 回填 |
+| C — Executor | `runtime/executor.py` | function-calling 循环: LLM <-> tool dispatch <-> result 回填; 返回 `ExecutionResult` 显式描述执行结果 |
 | E — Reflexion | `runtime/reflexion.py` | 工具失败时学 lesson, 微观自纠 (同一步重试) |
+| Memory projection | `runtime/memory_projector.py` | 统一把 memory 投影成 system prompt、memory index user message、compaction attachments |
 
 > **状态字段（非族）**：`Session.fsm_state` 字符串常量（IDLE/PLANNING/EXECUTING/REFLECTING/WAITING），由 `runtime/agent.py` 内联设置，不再算独立族。
 >
@@ -73,10 +74,11 @@ Agent.chat(session_id, user_input)
   -> Router.classify()              # 族 I: 选路径
   -> {
        DIRECT:        LLM.respond() -> Agent 追加 user+assistant
-       SIMPLE_TOOL:   Executor.run() (族 C, 持有 session.messages 写权 / Contract C)
+       SIMPLE_TOOL:   Executor.run() -> ExecutionResult
+                      # Executor 持有 tool-turn session.messages 写权 / Contract C
        PLAN_REQUIRED: Planner.make_plan() (族 D)
-                      -> for step in plan:        # Phase 0: 失败步不重规划
-                           Executor.run() (族 C+E, 含异步 memory 召回)
+                      -> for step in plan:
+                           Executor.run() -> ExecutionResult
                            needs_replan 仅记 trace
                       -> LLM.synthesize() 合成最终答案 (失败步标 [STEP i FAILED])
      }
@@ -138,7 +140,7 @@ This framework implements a Claude Code-style memory system: **file-based memory
 
 ### File-based memory (index always loaded, content lazy)
 
-Memory entries live on the `Session` (`session/models.py`), not in an embedding store. Each `MemoryEntry` has an `id`, `type`, `name`, `description`, `keywords`, `content`, and `saved_at`. The full index is built every turn by `build_memory_context_message()` (`runtime/agent.py`) and injected as a **user message** (soft constraint, not system prompt). Only `name`/`description`/`keywords`/`saved_at` are in the index — roughly 100 tokens per entry. The full `content` is **not** loaded by default; the model pulls it on demand via the `read_memory_body` tool (`tools/memory.py`).
+Memory entries live on the `Session` (`session/models.py`), not in an embedding store. Each `MemoryEntry` has an `id`, `type`, `name`, `description`, `keywords`, `content`, and `saved_at`. The full index is built every turn by `build_memory_context_message()` (`runtime/memory_projector.py`) and injected as a **user message** (soft constraint, not system prompt). Only `name`/`description`/`keywords`/`saved_at` are in the index — roughly 100 tokens per entry. The full `content` is **not** loaded by default; the model pulls it on demand via the `read_memory_body` tool (`tools/memory.py`).
 
 Two hard caps on the index (whichever hits first): `_MEMORY_INDEX_MAX_LINES = 200` lines, `_MEMORY_INDEX_MAX_BYTES = 25 * 1024` bytes.
 
@@ -230,9 +232,9 @@ Three industry alternatives were considered and rejected (`docs/PLAN.md`, Phase 
 | 删除会话 | [x] | `DELETE /sessions/{id}` + 前端 × 按钮 |
 | README 含运行/设计/memory 三段 | [x] | 本文件 |
 | PROMPTS.md 含 prompt 与问题记录 | [x] | `PROMPTS.md` |
-| 单测全绿 (mock LLM) | [x] | 155 passed |
+| 单测全绿 (mock LLM) | [x] | 166 passed |
 
-**Status**: S1-S6 + Phase 2-4 (Memory System) 代码全部完成, mock-LLM 测试全绿 (155 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。Phase 0 已删 ReWOO/Replanner/FSM。
+**Status**: S1-S6 + Phase 2-4 (Memory System) 代码全部完成, mock-LLM 测试全绿 (166 passed)。真实 DeepSeek API e2e 实跑通过 (4 轮 DIRECT/SIMPLE_TOOL/cross-turn memory, 2026-06-14)。Phase 0 已删 ReWOO/Replanner/FSM。
 
 ---
 
@@ -240,14 +242,14 @@ Three industry alternatives were considered and rejected (`docs/PLAN.md`, Phase 
 
 ```bash
 cd agent_framework
-.venv/Scripts/python -m pytest -q    # 155 passed
+.venv/Scripts/python -m pytest -q    # 166 passed
 .venv/Scripts/python -m ruff check .  # All checks passed
-.venv/Scripts/python -m mypy          # Success: no issues found in 22 source files (strict)
+.venv/Scripts/python -m mypy          # Success: no issues found in 23 source files (strict)
 ```
 
-- **155 个测试** 全绿 (含 `test_integration.py` 回归: Contract C 四消息序列 + id 配对、跨路径 user 互斥、build_system_prompt 纯函数、reload 不变量)。
+- **166 个测试** 全绿 (含 `test_integration.py` 回归: Contract C 四消息序列 + id 配对、跨路径 user 互斥、build_system_prompt 纯函数、reload 不变量)。
 - 所有 LLM 调用均 mock (FakeLLM / ScriptedExecutor), 不依赖真实 API。
-- mypy strict 模式, 22 个源文件零错误。
+- mypy strict 模式, 23 个源文件零错误。
 
 ---
 
@@ -278,7 +280,7 @@ agent_framework/
     todo.py            # 待办管理
     memory.py          # Phase 2: WriteMemory (门控) + ReadMemoryBody (懒读正文)
   trace/logger.py      # JSONL 执行日志
-  tests/               # 17 个测试文件, 155 passed
+  tests/               # 18 个测试文件, 166 passed
   static/index.html    # 前端 UI
 docs/superpowers/      # spec + 实现计划
 PROMPTS.md             # AI 辅助开发记录
