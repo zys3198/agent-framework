@@ -13,8 +13,9 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from llm.client import LLMResponse, ToolCallResult
-from runtime.agent import Agent, build_memory_context_message, build_system_prompt
+from runtime.agent import Agent
 from runtime.executor import Executor
+from runtime.memory_projector import build_memory_context_message, build_system_prompt
 from runtime.planner import Planner
 from runtime.reflexion import Reflexion
 from runtime.router import Route, Router

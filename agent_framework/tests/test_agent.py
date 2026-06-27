@@ -117,6 +117,21 @@ async def test_simple_tool_path(tmp_path):
     assert s.messages[-1].content == "done"
 
 
+async def test_agent_accepts_executor_result_metadata(tmp_path):
+    from runtime.executor import ExecutionResult
+
+    llm = FakeLLM()
+    ex = ScriptedExecutor(
+        [ExecutionResult(text="done", needs_replan=False, message_count=2, lesson_count=0)]
+    )
+    agent = _build_agent(tmp_path, llm, Route.SIMPLE_TOOL, executor=ex)
+
+    out = await agent.chat("s-result", "do it")
+
+    assert out == "done"
+    assert ex.prompts == ["do it"]
+
+
 async def test_plan_required_runs_steps(tmp_path):
     # planner.respond -> step JSON; each step executor.chat -> text; synthesize
     llm = FakeLLM(

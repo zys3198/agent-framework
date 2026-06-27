@@ -333,3 +333,63 @@ async def test_executor_recall_no_recaller_skips(tmp_path):
     )
     out = await ex.run(Session(id="s"), "hi", _trace(tmp_path))
     assert out.text == "hello"
+
+
+async def test_execution_result_reports_text_and_message_count(tmp_path):
+    from runtime.executor import ExecutionResult
+
+    ex = Executor(
+        llm=FakeLLM([LLMResponse(text="done", tool_calls=[])]),
+        registry=_registry(),
+        reflexion=FakeReflexion(),
+        max_steps=5,
+    )
+    s = Session(id="s")
+
+    out = await ex.run(s, "hello", _trace(tmp_path))
+
+    assert isinstance(out, ExecutionResult)
+    assert out.text == "done"
+    assert out.needs_replan is False
+    assert out.message_count == 2
+    assert out.lesson_count == 0
+    assert [m.role for m in s.messages] == ["user", "assistant"]
+
+
+async def test_execution_result_reports_lesson_count_on_tool_error(tmp_path):
+    class BadTool:
+        name = "bad"
+        description = "bad tool"
+        parameters: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+
+        async def run(self, args, session) -> str:
+            raise RuntimeError("boom")
+
+    reg = ToolRegistry()
+    reg.register(BadTool())
+    ex = Executor(
+        llm=FakeLLM(
+            [
+                LLMResponse(
+                    text="",
+                    tool_calls=[ToolCallResult(id="call-1", name="bad", args={})],
+                ),
+                LLMResponse(text="recovered", tool_calls=[]),
+            ]
+        ),
+        registry=reg,
+        reflexion=FakeReflexion(),
+        max_steps=5,
+    )
+    s = Session(id="s")
+
+    out = await ex.run(s, "use bad", _trace(tmp_path))
+
+    assert out.text == "recovered"
+    assert out.needs_replan is False
+    assert out.lesson_count == 1
+    assert s.memory.lessons == ["fake lesson"]

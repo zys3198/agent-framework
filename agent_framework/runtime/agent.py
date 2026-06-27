@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from runtime.agent_memory import load_project_context
-from session.models import RECENT_LESSONS_LIMIT, Memory, MemoryEntry, Message
+from runtime.memory_projector import build_memory_context_message, build_system_prompt
+from session.models import Message
 from trace.logger import TraceLogger
 
 STATE_IDLE = "IDLE"
@@ -14,8 +15,6 @@ STATE_PLANNING = "PLANNING"
 STATE_EXECUTING = "EXECUTING"
 STATE_REFLECTING = "REFLECTING"
 STATE_WAITING = "WAITING"
-_MEMORY_INDEX_MAX_LINES = 200
-_MEMORY_INDEX_MAX_BYTES = 25 * 1024
 
 if TYPE_CHECKING:
     from ctx.compactor import Compactor
@@ -30,59 +29,14 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def build_system_prompt(memory: Memory) -> str:
-    """Inject memory (todos / plan / lessons) into the system prompt (spec 5.3)."""
-    lines: list[str] = ["You are a helpful agent."]
-    if memory.todos:
-        lines.append("Todos:")
-        lines.extend(f"- [#{t.id}] {t.title} [{t.status}]" for t in memory.todos)
-    if memory.plan:
-        lines.append("Plan: " + " | ".join(s.prompt for s in memory.plan))
-    if memory.lessons:
-        lines.append("Lessons learned:")
-        lines.extend(f"- {lesson}" for lesson in memory.lessons[-RECENT_LESSONS_LIMIT:])
-    return "\n".join(lines)
-
-
-def build_memory_context_message(
-    memory: Memory, project_context: str = ""
-) -> dict[str, str] | None:
-    entries = _memory_index_lines(memory.entries)
-    parts = [part for part in [project_context.strip(), "\n".join(entries)] if part]
-    if not parts:
-        return None
-    return {"role": "user", "content": "\n\n".join(parts)}
-
-
-def _memory_index_lines(entries: list[MemoryEntry]) -> list[str]:
-    if not entries:
-        return []
-
-    lines = ["Memory index:"]
-    total_bytes = len(lines[0].encode("utf-8"))
-    for entry in entries:
-        line = (
-            f"- id={entry.id} type={entry.type} name={entry.name} "
-            f"description={entry.description} "
-            f"keywords={','.join(entry.keywords)} "
-            f"saved_at={entry.saved_at}"
-        )
-        next_bytes = total_bytes + 1 + len(line.encode("utf-8"))
-        if len(lines) >= _MEMORY_INDEX_MAX_LINES or next_bytes > _MEMORY_INDEX_MAX_BYTES:
-            break
-        lines.append(line)
-        total_bytes = next_bytes
-    return lines
-
-
 class Agent:
     """Top-level orchestrator. DIRECT + SIMPLE_TOOL + PLAN_REQUIRED paths.
 
-    Contract C: on SIMPLE_TOOL and per-step in PLAN_REQUIRED, the Executor owns
-    session.messages persistence (user / assistant(tool_calls) / tool / final
-    assistant). On DIRECT this Agent appends user + assistant itself. In the
-    PLAN_REQUIRED branch the Agent appends ONLY the final synthesized assistant
-    answer -- per-step messages are persisted by the executor.
+    Contract C: Executor owns tool-turn message persistence and returns an
+    ExecutionResult describing the turn. On DIRECT this Agent appends user +
+    assistant itself. In the PLAN_REQUIRED branch the Agent appends ONLY the
+    final synthesized assistant answer; per-step messages are persisted by the
+    executor.
 
     Phase 0: ReWOO + Replanner deleted (dead paths). Planner still builds the
     initial plan; failures are NOT re-planned -- the failed step's outcome is
@@ -110,8 +64,9 @@ class Agent:
         self._workspace_root = workspace_root or Path.cwd()
         self._user_home = user_home
         self._compactor = compactor
-        # Per-session lock serializes the full load->modify->save transaction,
-        # preventing lost updates when concurrent requests hit the same session.
+        # Async per-session lock serializes the await-heavy chat turn. Store also
+        # owns a synchronous with_session seam for non-async load->mutate->save
+        # callers.
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
 
@@ -162,14 +117,14 @@ class Agent:
             elif route == Route.SIMPLE_TOOL:
                 # Executor owns all session.messages persistence on this path (Contract C).
                 session.fsm_state = STATE_EXECUTING
-                outcome = await self._executor.run(
+                execution = await self._executor.run(
                     session, user_input, trace, project_context=project_context
                 )
                 session.fsm_state = STATE_WAITING
-                if outcome.needs_replan:
+                if execution.needs_replan:
                     # No replanner now; log so the failure is not silently swallowed.
                     trace.log_truncated()
-                answer = outcome.text
+                answer = execution.text
 
             else:  # PLAN_REQUIRED
                 session.fsm_state = STATE_PLANNING
@@ -185,11 +140,11 @@ class Agent:
                 # Replanner safety net).
                 results: dict[int, object] = {}
                 for i in range(len(plan)):
-                    outcome = await self._executor.run(
+                    execution = await self._executor.run(
                         session, plan[i].prompt, trace, project_context=project_context
                     )
-                    results[i] = outcome
-                    if outcome.needs_replan:
+                    results[i] = execution
+                    if execution.needs_replan:
                         trace.log_truncated()
 
                 answer = await self._llm.synthesize(

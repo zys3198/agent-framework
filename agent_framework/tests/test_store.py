@@ -106,3 +106,50 @@ def test_concurrent_save_does_not_corrupt(tmp_path):
     data = json.loads(raw)
     assert isinstance(data, dict)
     assert "messages" in data
+
+
+def test_with_session_saves_mutation(tmp_path):
+    store = Store(tmp_path)
+
+    def mutate(session):
+        session.messages.append(Message(role="user", content="hello"))
+        return "ok"
+
+    result = store.with_session("s1", mutate)
+
+    assert result == "ok"
+    loaded = store.load("s1")
+    assert [(m.role, m.content) for m in loaded.messages] == [("user", "hello")]
+
+
+def test_with_session_saves_when_mutator_returns_none(tmp_path):
+    store = Store(tmp_path)
+
+    def mutate(session):
+        session.memory.lessons.append("lesson")
+
+    result = store.with_session("s1", mutate)
+
+    assert result is None
+    assert store.load("s1").memory.lessons == ["lesson"]
+
+
+def test_with_session_does_not_save_when_mutator_raises(tmp_path):
+    store = Store(tmp_path)
+    original = store.load("s1")
+    original.messages.append(Message(role="user", content="before"))
+    store.save(original)
+
+    def mutate(session):
+        session.messages.append(Message(role="user", content="after"))
+        raise RuntimeError("boom")
+
+    try:
+        store.with_session("s1", mutate)
+    except RuntimeError as exc:
+        assert str(exc) == "boom"
+    else:
+        raise AssertionError("expected RuntimeError")
+
+    loaded = store.load("s1")
+    assert [(m.role, m.content) for m in loaded.messages] == [("user", "before")]

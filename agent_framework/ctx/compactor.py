@@ -19,6 +19,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from runtime.memory_projector import build_memory_attachments
 from session.models import Message
 
 if TYPE_CHECKING:
@@ -164,19 +165,7 @@ class Compactor:
 
     def _build_attachments(self, session: Session) -> str:
         """Extract state info (todos/plan/workspace) as verbatim attachments."""
-        parts: list[str] = ["--- Attachments (state info, verbatim) ---"]
-        if session.memory.todos:
-            parts.append("Todos:")
-            for t in session.memory.todos:
-                parts.append(f"  - [#{t.id}] {t.title} [{t.status}]")
-        if session.memory.plan:
-            parts.append("Plan:")
-            for s in session.memory.plan:
-                parts.append(f"  - {s.prompt}")
-        if session.memory.workspace:
-            parts.append("Workspace:")
-            parts.append("  " + json.dumps(session.memory.workspace, ensure_ascii=False, indent=2))
-        return "\n".join(parts)
+        return build_memory_attachments(session.memory)
 
     async def auto_compact(self, session: Session) -> list[Message] | None:
         """Full summary when estimated tokens exceed threshold.

@@ -19,16 +19,21 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
-class Outcome:
+class ExecutionResult:
     text: str
     needs_replan: bool = False
+    message_count: int = 0
+    lesson_count: int = 0
+
+
+Outcome = ExecutionResult
 
 
 class Executor:
     """Function-calling loop: LLM <-> tool dispatch <-> result write-back.
 
     On tool error, triggers Reflexion to learn a lesson, appends it to
-    memory, and continues. Returns Outcome(text, needs_replan).
+    memory, and continues. Returns ExecutionResult(text, needs_replan, message_count, lesson_count).
     """
 
     def __init__(
@@ -47,10 +52,13 @@ class Executor:
 
     async def run(
         self, session: Session, prompt: str, trace: TraceLogger, project_context: str = ""
-    ) -> Outcome:
+    ) -> ExecutionResult:
         from datetime import UTC, datetime
 
-        from runtime.agent import build_memory_context_message, build_system_prompt
+        from runtime.memory_projector import (
+            build_memory_context_message,
+            build_system_prompt,
+        )
         from session.models import Message
         from tools.base import ToolCall
 
@@ -62,6 +70,8 @@ class Executor:
         # preceded by the assistant(tool_calls) that issued it.
         # System prompt is injected here too (was missing on the tool path:
         # memory/todos/lessons were invisible to the model).
+        start_message_count = len(session.messages)
+        start_lesson_count = len(session.memory.lessons)
         session.messages.append(Message(role="user", content=prompt))
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(session.memory)}
@@ -152,7 +162,12 @@ class Executor:
 
             if not resp.tool_calls:
                 session.messages.append(Message(role="assistant", content=resp.text))
-                return Outcome(text=resp.text, needs_replan=False)
+                return ExecutionResult(
+                    text=resp.text,
+                    needs_replan=False,
+                    message_count=len(session.messages) - start_message_count,
+                    lesson_count=len(session.memory.lessons) - start_lesson_count,
+                )
 
             tool_calls_payload = [
                 {
@@ -217,11 +232,21 @@ class Executor:
                         step,
                         tc.name,
                     )
-                    return Outcome(text=result, needs_replan=True)
+                    return ExecutionResult(
+                        text=result,
+                        needs_replan=True,
+                        message_count=len(session.messages) - start_message_count,
+                        lesson_count=len(session.memory.lessons) - start_lesson_count,
+                    )
 
         trace.log_truncated()
         session.messages.append(Message(role="assistant", content="(truncated)"))
-        return Outcome(text="(truncated)", needs_replan=True)
+        return ExecutionResult(
+            text="(truncated)",
+            needs_replan=True,
+            message_count=len(session.messages) - start_message_count,
+            lesson_count=len(session.memory.lessons) - start_lesson_count,
+        )
 
     def _flush_pending_tools(
         self,

@@ -291,3 +291,4 @@ def test_agent_concurrent_chat_same_session_serialized(tmp_path):
     asyncio.run(_run())
     s = Store(tmp_path).load("s1")
     assert len(s.messages) == 6
+    assert sorted(m.content for m in s.messages if m.role == "user") == ["A", "B", "init"]
